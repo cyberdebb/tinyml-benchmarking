@@ -6,6 +6,24 @@ from pathlib import Path
 import sys
 import matplotlib.pyplot as plt
 import os
+import tensorflow as tf
+from keras.saving import register_keras_serializable
+
+
+
+@register_keras_serializable(package="custom")
+def zeropad(x):
+    y = tf.zeros_like(x)
+    return tf.concat([x, y], axis=2)
+
+@register_keras_serializable(package="custom")
+def zeropad_output_shape(input_shape):
+    shape = list(input_shape)
+    assert len(shape) == 3
+    shape[2] *= 2
+    return tuple(shape)
+
+
 
 def mkdir_recursive(path):
   if path == "":
@@ -167,3 +185,13 @@ def plot_beat(beat_array, class_id=None):
     
     plt.tight_layout()
     plt.show()
+
+
+def convert_keras_to_tflite(model, output_path):
+    converter = tf.lite.TFLiteConverter.from_keras_model(model)
+    tflite_model = converter.convert()
+
+    output_path = Path(output_path)
+    mkdir_recursive(str(output_path.parent))
+    output_path.write_bytes(tflite_model)
+    print(f"TFLite model saved to {output_path}")
