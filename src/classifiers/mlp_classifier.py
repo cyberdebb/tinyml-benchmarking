@@ -4,56 +4,11 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import (
-    classification_report,
-    confusion_matrix, 
-    accuracy_score, 
-    precision_score, 
-    recall_score, 
-    f1_score, 
-    roc_curve, 
-    auc, 
-    precision_recall_curve
-)
+from sklearn.metrics import classification_report, confusion_matrix,  accuracy_score,  precision_score,  recall_score,  f1_score,  roc_curve,  auc,  precision_recall_curve
 import joblib  # Used for model serialization
 
-def load_data(file_path):
-    """
-    Load data from a CSV file.
+from load_data import build_full_dataset, classes
 
-    Parameters:
-    - file_path (str): Path to the CSV file.
-
-    Returns:
-    - x_data (numpy.ndarray): Input features.
-    - y_data (numpy.ndarray): Labels.
-    """
-    df = pd.read_csv(file_path, header=None)
-    x_data = df.values[:, :-1]
-    y_data = df.values[:, -1].astype(int)
-    return x_data, y_data
-
-def visualize_data(x_train, y_train, directory):
-    """
-    Visualize one Normal and one Abnormal heartbeat.
-
-    Parameters:
-    - x_train (numpy.ndarray): Training data.
-    - y_train (numpy.ndarray): Training labels.
-    """
-    C0 = np.argwhere(y_train == 0).flatten()
-    C1 = np.argwhere(y_train == 1).flatten()
-
-    x = np.arange(0, 187) * 8 / 1000.0
-
-    plt.figure(figsize=(20, 12))
-    plt.plot(x, x_train[C0, :][0], label="Normal")
-    plt.plot(x, x_train[C1, :][0], label="Abnormal")
-    plt.legend()
-    plt.title("1-beat ECG for every category", fontsize=20)
-    plt.ylabel("Normalized Amplitude (0 - 1)", fontsize=15)
-    plt.xlabel("Time (ms)", fontsize=15)
-    plt.savefig(f"{directory}/reports/figures/one-beat-ecg-for-each-cats.png")
 
 def train_model_sklearn(x_train, y_train):
     """
