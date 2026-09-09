@@ -9,4 +9,7 @@ https://www.kaggle.com/code/prashant111/random-forest-classifier-tutorial
 https://www.tensorflow.org/tutorials/images/cnn?hl=pt-br
 https://www.tensorflow.org/guide/core/mlp_core
 
-https://github.com/physhik/ecg-mit-bih/tree/main
+cnn: https://github.com/physhik/ecg-mit-bih/tree/main
+mlp: https://github.com/carrliitos/ecg_classification
+random forest:
+svm: 
