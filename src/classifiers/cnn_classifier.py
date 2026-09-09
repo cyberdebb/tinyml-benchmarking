@@ -7,30 +7,28 @@ from keras.layers import Activation, BatchNormalization, Conv1D, Dense, Dropout,
 from keras.models import Model
 from keras.optimizers import Adam
 
-from pathlib import Path
-import sys
-
-sys.path.append(str(Path(__file__).resolve().parent.parent))
-
 from load_data import build_full_dataset, classes
 from helpers import print_results, mkdir_recursive, convert_keras_to_tflite, zeropad, zeropad_output_shape
 
 
-def cnn_get_config():
-    return SimpleNamespace(
-        split=True,
-        input_size=256,
-        filter_length=32,
-        kernel_size=16,
-        drop_rate=0.2,
-        feature='MLII',
-        epochs=80,
-        batch=256,
-        patience=10,
-        min_lr=0.00005,
-        checkpoint_path=None,
-        resume_epoch=0,
-    )
+from dataclasses import dataclass
+
+@dataclass
+class CNNConfig:
+    split: bool = True
+    input_size: int = 256
+    filter_length: int = 32
+    kernel_size: int = 16
+    drop_rate: float = 0.2
+    feature: str = 'MLII'
+    epochs: int = 80
+    batch: int = 256
+    patience: int = 10
+    min_lr: float = 0.00005
+    checkpoint_path: str | None = None
+    resume_epoch: int = 0
+
+
 
 def first_conv_block(inputs, config):
     layer = Conv1D(
@@ -214,7 +212,7 @@ def cnn_train(config, X, y, Xval=None, yval=None):
 
 
 def main():
-    config = cnn_get_config()
+    config = CNNConfig()
     X, y, Xval, yval = build_full_dataset(config)
     cnn_train(config, X, y, Xval, yval)
 
