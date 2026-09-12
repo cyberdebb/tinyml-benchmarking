@@ -1,12 +1,16 @@
 from types import SimpleNamespace
+from pathlib import Path
 import matplotlib.pyplot as plt
+import tensorflow as tf
+from keras import Sequential
+from keras.layers import Dense, Input
 from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, confusion_matrix,  accuracy_score,  precision_score,  recall_score,  f1_score,  roc_curve,  auc,  precision_recall_curve
-import joblib  # Used for model serialization
+import joblib
 
 from load_data import build_full_dataset, classes
-from helpers import extract_neurokit_features
+from helpers import extract_neurokit_features, mkdir_recursive
 
 
 def train_model_sklearn(x_train, y_train):
@@ -145,11 +149,26 @@ def export_model(mlp_classifier, directory):
     - mlp_classifier (MLPClassifier): Trained MLPClassifier model.
     - save_path (str): Path to save the exported model.
     """
-    save_path=f'{directory}/models/mitdb/ecg_serving_model.joblib'
-    joblib.dump(mlp_classifier, save_path)
+    output_directory = Path(directory) / 'models'
+    output_directory.mkdir(parents=True, exist_ok=True)
+    joblib.dump(mlp_classifier, output_directory / 'mlp_classifier.joblib')
+
+    keras_model = Sequential([Input(shape=(mlp_classifier.n_features_in_,))])
+    for layer_size in mlp_classifier.hidden_layer_sizes:
+        keras_model.add(Dense(layer_size, activation='relu'))
+    keras_model.add(Dense(len(mlp_classifier.classes_), activation='softmax'))
+
+    keras_model.set_weights(
+        [weight for pair in zip(mlp_classifier.coefs_, mlp_classifier.intercepts_) for weight in pair]
+    )
+    keras_model.save(output_directory / 'mlp_classifier.keras')
+
+    converter = tf.lite.TFLiteConverter.from_keras_model(keras_model)
+    (output_directory / 'mlp_classifier.tflite').write_bytes(converter.convert())
 
 def main():
-    directory = ''
+    mkdir_recursive('models')
+    directory = 'models'
     config = SimpleNamespace(split=True, input_size=256, feature='MLII')
     x_train, y_train, x_validate, y_validate = build_full_dataset(config)
     x_train, y_train = extract_neurokit_features(x_train, y_train)

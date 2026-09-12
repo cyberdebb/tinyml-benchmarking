@@ -1,7 +1,7 @@
 from pathlib import Path
 import pickle
 from types import SimpleNamespace
-
+import emlearn
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
@@ -9,10 +9,15 @@ from sklearn.metrics import accuracy_score, classification_report, confusion_mat
 from sklearn.model_selection import cross_val_predict
 
 from load_data import build_full_dataset, classes
-from helpers import extract_neurokit_features
+from helpers import extract_neurokit_features, mkdir_recursive
 
 
-OUTPUT_MODEL_PATH = Path("models/heartbeatClassifier.pickle")
+def export_model(forest_classifier):
+    mkdir_recursive('models')
+    output_directory = Path("models")
+    output_directory.mkdir(parents=True, exist_ok=True)
+    c_model = emlearn.convert(forest_classifier, method="inline")
+    c_model.save(file=str(output_directory / "random_forest_model.h"), name="random_forest")
 
 def leave_one_record_out(sources):
     for source in np.unique(sources):
@@ -82,8 +87,10 @@ def main():
             zero_division=0,
         )
     )
+    
+    model_path = Path("models/heartbeatClassifier.pickle")
 
-    with OUTPUT_MODEL_PATH.open("wb") as file:
+    with model_path.open("wb") as file:
         pickle.dump(
             {
                 "preprocessor": None,
@@ -92,7 +99,8 @@ def main():
             },
             file,
         )
-    print(f"Model saved to {OUTPUT_MODEL_PATH}")
+    export_model(forest_classifier)
+    print(f"Model saved to {model_path}")
 
 if __name__ == "__main__":
     main()

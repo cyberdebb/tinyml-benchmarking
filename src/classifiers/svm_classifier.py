@@ -1,6 +1,6 @@
 from pathlib import Path
-
 import joblib
+import emlearn
 import numpy as np
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 from sklearn.pipeline import make_pipeline
@@ -8,10 +8,15 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 
 from load_data import build_full_dataset, classes
-from helpers import extract_neurokit_features
+from helpers import extract_neurokit_features, mkdir_recursive
 
 
-MODEL_PATH = Path("models/svm_classifier.joblib")
+def export_model(model):
+    mkdir_recursive('models')
+    output_directory = Path("models")
+    output_directory.mkdir(parents=True, exist_ok=True)
+    c_model = emlearn.convert(model, method="inline")
+    c_model.save(file=str(output_directory / "svm_model.h"), name="svm_model")
 
 
 def train_svm(x_train, y_train, C_value=0.001, gamma_value=0.0):
@@ -48,6 +53,8 @@ def evaluate_model(model, x_test, y_test):
 
 
 def main(C_value=0.001, gamma_value=0.0):
+    model_path = Path("models/svm_classifier.joblib")
+    
     config = type("SVMConfig", (), {
         "split": True,
         "input_size": 256,
@@ -61,9 +68,10 @@ def main(C_value=0.001, gamma_value=0.0):
     model = train_svm(x_train, y_train, C_value, gamma_value)
     evaluate_model(model, x_test, y_test)
 
-    MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(model, MODEL_PATH)
-    print(f"Model saved to {MODEL_PATH}")
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump(model, model_path)
+    export_model(model)
+    print(f"Model saved to {model_path}")
 
 
 if __name__ == "__main__":

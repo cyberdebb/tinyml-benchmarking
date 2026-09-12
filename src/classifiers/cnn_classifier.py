@@ -1,6 +1,5 @@
 import numpy as np
 from types import SimpleNamespace
-
 from keras import models
 from keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau, TensorBoard
 from keras.layers import Activation, BatchNormalization, Conv1D, Dense, Dropout, Flatten, Input, Lambda, MaxPooling1D, add
@@ -25,14 +24,19 @@ def zeropad_output_shape(input_shape):
     shape[2] *= 2
     return tuple(shape)
 
-def convert_keras_to_tflite(model, output_path):
+def export_model(model, directory, feature):
+    output_directory = Path(directory)
+    output_directory.mkdir(parents=True, exist_ok=True)
+
+    keras_path = output_directory / f'{feature}-latest.keras'
+    tflite_path = output_directory / f'{feature}-latest.tflite'
+    model.save(keras_path)
+
     converter = tf.lite.TFLiteConverter.from_keras_model(model)
     tflite_model = converter.convert()
-
-    output_path = Path(output_path)
-    mkdir_recursive(str(output_path.parent))
-    output_path.write_bytes(tflite_model)
-    print(f"TFLite model saved to {output_path}")
+    tflite_path.write_bytes(tflite_model)
+    print(f"Keras model saved to {keras_path}")
+    print(f"TFLite model saved to {tflite_path}")
 
 def first_conv_block(inputs, config):
     layer = Conv1D(
@@ -211,7 +215,7 @@ def cnn_train(config, X, y, Xval=None, yval=None):
         callbacks=build_training_callbacks(config),
         initial_epoch=initial_epoch,
     )
-    convert_keras_to_tflite(model, f'models/{config.feature}-latest.tflite')
+    export_model(model, 'models', config.feature)
     print_results(config, model, Xvale, yval, classes)
 
 
