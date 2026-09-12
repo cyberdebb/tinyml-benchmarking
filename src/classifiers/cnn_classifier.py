@@ -6,29 +6,33 @@ from keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau, T
 from keras.layers import Activation, BatchNormalization, Conv1D, Dense, Dropout, Flatten, Input, Lambda, MaxPooling1D, add
 from keras.models import Model
 from keras.optimizers import Adam
+import tensorflow as tf
+from keras.saving import register_keras_serializable
+from pathlib import Path
 
 from load_data import build_full_dataset, classes
-from helpers import print_results, mkdir_recursive, convert_keras_to_tflite, zeropad, zeropad_output_shape
+from helpers import print_results, mkdir_recursive, zeropad, zeropad_output_shape
 
+@register_keras_serializable(package="custom")
+def zeropad(x):
+    y = tf.zeros_like(x)
+    return tf.concat([x, y], axis=2)
 
-from dataclasses import dataclass
+@register_keras_serializable(package="custom")
+def zeropad_output_shape(input_shape):
+    shape = list(input_shape)
+    assert len(shape) == 3
+    shape[2] *= 2
+    return tuple(shape)
 
-@dataclass
-class CNNConfig:
-    split: bool = True
-    input_size: int = 256
-    filter_length: int = 32
-    kernel_size: int = 16
-    drop_rate: float = 0.2
-    feature: str = 'MLII'
-    epochs: int = 80
-    batch: int = 256
-    patience: int = 10
-    min_lr: float = 0.00005
-    checkpoint_path: str | None = None
-    resume_epoch: int = 0
+def convert_keras_to_tflite(model, output_path):
+    converter = tf.lite.TFLiteConverter.from_keras_model(model)
+    tflite_model = converter.convert()
 
-
+    output_path = Path(output_path)
+    mkdir_recursive(str(output_path.parent))
+    output_path.write_bytes(tflite_model)
+    print(f"TFLite model saved to {output_path}")
 
 def first_conv_block(inputs, config):
     layer = Conv1D(
@@ -212,7 +216,20 @@ def cnn_train(config, X, y, Xval=None, yval=None):
 
 
 def main():
-    config = CNNConfig()
+    config = SimpleNamespace(
+        split=True,
+        input_size=256,
+        filter_length=32,
+        kernel_size=16,
+        drop_rate=0.2,
+        feature='MLII',
+        epochs=80,
+        batch=256,
+        patience=10,
+        min_lr=0.00005,
+        checkpoint_path=None,
+        resume_epoch=0,
+    )
     X, y, Xval, yval = build_full_dataset(config)
     cnn_train(config, X, y, Xval, yval)
 

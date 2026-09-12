@@ -1,6 +1,4 @@
-import os
-import numpy as np
-import pandas as pd
+from types import SimpleNamespace
 import matplotlib.pyplot as plt
 from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import train_test_split
@@ -8,6 +6,7 @@ from sklearn.metrics import classification_report, confusion_matrix,  accuracy_s
 import joblib  # Used for model serialization
 
 from load_data import build_full_dataset, classes
+from helpers import extract_neurokit_features
 
 
 def train_model_sklearn(x_train, y_train):
@@ -151,28 +150,13 @@ def export_model(mlp_classifier, directory):
 
 def main():
     directory = ''
-    train_csv_path = f"{directory}/data/interim/mitdb/train.csv"
-    validate_csv_path = f"{directory}/data/interim/mitdb/validate.csv"
-    test_csv_path = f"{directory}/data/interim/mitdb/test.csv"
+    config = SimpleNamespace(split=True, input_size=256, feature='MLII')
+    x_train, y_train, x_validate, y_validate = build_full_dataset(config)
+    x_train, y_train = extract_neurokit_features(x_train, y_train)
+    x_validate, y_validate = extract_neurokit_features(x_validate, y_validate)
 
-    # Load the data
-    x_train, y_train = load_data(train_csv_path)
-    x_validate, y_validate = load_data(validate_csv_path)
-    x_test, y_test = load_data(test_csv_path)
-
-    # Visualize Data
-    visualize_data(x_train, y_train, directory)
-
-    # Train the model
     trained_mlp_model = train_model_sklearn(x_train, y_train)
-
-    # Evaluate the model
     evaluate_model(trained_mlp_model, x_validate, y_validate, directory)
-
-    # Test the model
-    test_model(trained_mlp_model, x_test, y_test, directory)
-
-    # Export the model
     export_model(trained_mlp_model, directory)
 
 if __name__ == "__main__":

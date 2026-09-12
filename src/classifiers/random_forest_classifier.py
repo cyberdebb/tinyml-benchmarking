@@ -1,11 +1,7 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""Train and evaluate a Random Forest using NeuroKit2 ECG features."""
-
 from pathlib import Path
 import pickle
+from types import SimpleNamespace
 
-import neurokit2 as nk
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
@@ -13,88 +9,10 @@ from sklearn.metrics import accuracy_score, classification_report, confusion_mat
 from sklearn.model_selection import cross_val_predict
 
 from load_data import build_full_dataset, classes
+from helpers import extract_neurokit_features
 
-DATASET_PATH = Path("../datasets")
-OUTPUT_MODEL_PATH = DATASET_PATH / "heartbeatClassifier.pickle"
-SAMPLING_RATE = 150
-NUMBER_OF_TREES = 40
-BEAT_WINDOW_SECONDS = 0.6
 
-FEATURE_COLUMNS = (
-    "ECG_Clean",
-    "ECG_Rate",
-    "ECG_Quality",
-    "ECG_Phase_Atrial",
-    "ECG_Phase_Ventricular",
-)
-
-OUTPUT_LABELS = [
-    BeatType.NORMAL.symbol(),
-    BeatType.AURICULAR_PREMATURE_CONTRACTION.symbol(),
-    BeatType.PREMATURE_VENTRICULAR_CONTRACTION.symbol(),
-    BeatType.FUSION.symbol(),
-    BeatType.UNKNOWN.symbol(),
-]
-
-def load_signal_dataset(path):
-    with path.open("rb") as file:
-        return pickle.load(file)
-
-def _numeric_value(values, default=0.0):
-    numeric_values = pd.to_numeric(values, errors="coerce").to_numpy(dtype=float)
-    numeric_values = numeric_values[np.isfinite(numeric_values)]
-    return float(numeric_values[-1]) if len(numeric_values) else default
-
-def _beat_features(processed_signal, beat_time):
-    beat_index = int(round(beat_time * SAMPLING_RATE))
-    half_window = int(BEAT_WINDOW_SECONDS * SAMPLING_RATE / 2)
-    start = max(0, beat_index - half_window)
-    end = min(len(processed_signal), beat_index + half_window)
-    window = processed_signal.iloc[start:end]
-
-    features = []
-    for column in FEATURE_COLUMNS:
-        values = window[column]
-        if column == "ECG_Clean":
-            numeric_values = pd.to_numeric(values, errors="coerce").dropna()
-            if numeric_values.empty:
-                features.extend([0.0, 0.0, 0.0, 0.0])
-            else:
-                features.extend([
-                    float(numeric_values.mean()),
-                    float(numeric_values.std()),
-                    float(numeric_values.min()),
-                    float(numeric_values.max()),
-                ])
-        else:
-            features.append(_numeric_value(values))
-    return features
-
-def extract_neurokit_features(dataset):
-    feature_rows = []
-    labels = []
-    sources = []
-
-    for signal, record_labels, record_name in zip(
-        dataset["signals"], dataset["labels"], dataset["records"]
-    ):
-        processed_signal, _ = nk.ecg_process(
-            np.asarray(signal),
-            sampling_rate=SAMPLING_RATE,
-        )
-        for label in record_labels:
-            beat_type = label["beat"]
-            if beat_type == BeatType.OTHER:
-                continue
-            feature_rows.append(_beat_features(processed_signal, label["time"]))
-            labels.append(beat_type.value)
-            sources.append(record_name)
-
-    return (
-        np.asarray(feature_rows, dtype=np.float32),
-        np.asarray(labels),
-        np.asarray(sources),
-    )
+OUTPUT_MODEL_PATH = Path("models/heartbeatClassifier.pickle")
 
 def leave_one_record_out(sources):
     for source in np.unique(sources):
@@ -127,41 +45,30 @@ def evaluate_classifier(confusion_matrix_values, outputs):
     return pd.DataFrame(quality, columns=outputs, index=quality_measures)
 
 def main():
-    train_dataset = load_signal_dataset(DATASET_PATH / "train_set_signals.pickle")
-    test_dataset = load_signal_dataset(DATASET_PATH / "test_set_signals.pickle")
-
-    print("Extracting NeuroKit2 features...")
-    train_features, train_labels, train_sources = extract_neurokit_features(train_dataset)
-    test_features, test_labels, _ = extract_neurokit_features(test_dataset)
+    config = SimpleNamespace(split=True, input_size=256, feature='MLII')
+    train_features, train_labels, test_features, test_labels = build_full_dataset(config)
+    train_features, train_labels = extract_neurokit_features(train_features, train_labels)
+    test_features, test_labels = extract_neurokit_features(test_features, test_labels)
 
     print("Training model...")
     forest_classifier = RandomForestClassifier(
         random_state=42,
-        n_estimators=NUMBER_OF_TREES,
+        n_estimators=40,
     )
     forest_classifier.fit(train_features, train_labels)
     print(forest_classifier.feature_importances_)
-
-    print("Testing with leave-one-record-out cross-validation...")
-    train_predictions = cross_val_predict(
-        forest_classifier,
-        train_features,
-        train_labels,
-        cv=leave_one_record_out(train_sources),
-    )
-    print("Train accuracy:", accuracy_score(train_labels, train_predictions))
 
     test_predictions = forest_classifier.predict(test_features)
     test_confusion_matrix = confusion_matrix(
         test_labels,
         test_predictions,
-        labels=np.arange(len(OUTPUT_LABELS)),
+        labels=np.arange(len(classes)),
     )
     print("Test confusion matrix:")
     print(test_confusion_matrix)
     print("Test accuracy:", accuracy_score(test_labels, test_predictions))
 
-    evaluation = evaluate_classifier(test_confusion_matrix, OUTPUT_LABELS)
+    evaluation = evaluate_classifier(test_confusion_matrix, classes)
     print("Evaluation details:")
     print(evaluation)
     print("Classification report:")
@@ -169,8 +76,8 @@ def main():
         classification_report(
             test_labels,
             test_predictions,
-            labels=np.arange(len(OUTPUT_LABELS)),
-            target_names=OUTPUT_LABELS,
+            labels=np.arange(len(classes)),
+            target_names=classes,
             digits=4,
             zero_division=0,
         )
@@ -182,7 +89,6 @@ def main():
                 "preprocessor": None,
                 "model": forest_classifier,
                 "Evaluation_test": evaluation,
-                "feature_columns": FEATURE_COLUMNS,
             },
             file,
         )

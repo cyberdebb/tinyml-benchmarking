@@ -12,13 +12,13 @@ def realtime_bandpass_filter(data, lowcut=0.5, highcut=45.0, fs=360.0, order=4):
     return sosfilt(sos, data)
 
 # 2. Mapeamento AAMI 
-classes = ['N', 'A', 'V', 'F', 'P']
+classes = ['N', 'S', 'V', 'F', 'Q']
 aami_mapping = {
     'N': 0, 'L': 0, 'R': 0, 'e': 0, 'j': 0,
     'A': 1, 'a': 1, 'J': 1, 'S': 1,
     'V': 2, 'E': 2,
     'F': 3,
-    'P': 4, '/': 4, 'f': 4, 'u': 4
+    'P': 4, '/': 4, 'f': 4, 'u': 4, 'Q': 4
 }
 
 # 3. Extração por paciente

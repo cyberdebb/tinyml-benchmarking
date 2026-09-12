@@ -1,28 +1,14 @@
 import matplotlib.pyplot as plt
 import numpy as np
+from load_data import aami_mapping, classes
 from keras import models
 from sklearn.metrics import classification_report, confusion_matrix, f1_score, precision_recall_curve, roc_auc_score, roc_curve
-from pathlib import Path
 import sys
 import matplotlib.pyplot as plt
 import os
-import tensorflow as tf
-from keras.saving import register_keras_serializable
-
-
-
-@register_keras_serializable(package="custom")
-def zeropad(x):
-    y = tf.zeros_like(x)
-    return tf.concat([x, y], axis=2)
-
-@register_keras_serializable(package="custom")
-def zeropad_output_shape(input_shape):
-    shape = list(input_shape)
-    assert len(shape) == 3
-    shape[2] *= 2
-    return tuple(shape)
-
+import neurokit2 as nk
+import numpy as np
+import pandas as pd
 
 
 def mkdir_recursive(path):
@@ -187,11 +173,56 @@ def plot_beat(beat_array, class_id=None):
     plt.show()
 
 
-def convert_keras_to_tflite(model, output_path):
-    converter = tf.lite.TFLiteConverter.from_keras_model(model)
-    tflite_model = converter.convert()
+def numeric_value(values, default=0.0):
+    numeric_values = pd.to_numeric(values, errors="coerce").to_numpy(dtype=float)
+    numeric_values = numeric_values[np.isfinite(numeric_values)]
+    return float(numeric_values[-1]) if len(numeric_values) else default
 
-    output_path = Path(output_path)
-    mkdir_recursive(str(output_path.parent))
-    output_path.write_bytes(tflite_model)
-    print(f"TFLite model saved to {output_path}")
+def beat_features(processed_signal, beat_time):
+    samplig_rate = 150
+    beat_window_seconds = 0.6
+    beat_index = int(round(beat_time * samplig_rate))
+    half_window = int(beat_window_seconds * samplig_rate / 2)
+    start = max(0, beat_index - half_window)
+    end = min(len(processed_signal), beat_index + half_window)
+    window = processed_signal.iloc[start:end]
+
+    feature_columns = (
+        "ECG_Clean",
+        "ECG_Rate",
+        "ECG_Quality",
+        "ECG_Phase_Atrial",
+        "ECG_Phase_Ventricular",
+    )
+    
+    features = []
+    for column in feature_columns:
+        values = window[column]
+        if column == "ECG_Clean":
+            numeric_values = pd.to_numeric(values, errors="coerce").dropna()
+            if numeric_values.empty:
+                features.extend([0.0, 0.0, 0.0, 0.0])
+            else:
+                features.extend([
+                    float(numeric_values.mean()),
+                    float(numeric_values.std()),
+                    float(numeric_values.min()),
+                    float(numeric_values.max()),
+                ])
+        else:
+            features.append(numeric_value(values))
+    return features
+
+def extract_neurokit_features(signals, labels):
+    samplig_rate = 150
+    feature_rows = []
+
+    for signal in signals:
+        processed_signal, _ = nk.ecg_process(
+            np.asarray(signal),
+            sampling_rate=samplig_rate,
+        )
+        
+        feature_rows.append(beat_features(processed_signal, len(signal) / (2 * samplig_rate)))
+
+    return np.asarray(feature_rows, dtype=np.float32), np.asarray(labels)
