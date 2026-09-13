@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 import os
 
-os.environ.setdefault('TF_ENABLE_ONEDNN_OPTS', '0')
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 
 import matplotlib.pyplot as plt
 import tensorflow as tf

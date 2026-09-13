@@ -2,7 +2,7 @@ import numpy as np
 from types import SimpleNamespace
 import os
 
-os.environ.setdefault('TF_ENABLE_ONEDNN_OPTS', '0')
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 
 from keras import models
 from keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau, TensorBoard
