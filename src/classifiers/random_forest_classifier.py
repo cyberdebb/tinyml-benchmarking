@@ -105,6 +105,7 @@ def main():
     )
     
     model_path = Path("models/random_forest_classifier.pickle")
+    model_path.parent.mkdir(parents=True, exist_ok=True)
 
     with model_path.open("wb") as file:
         pickle.dump(
