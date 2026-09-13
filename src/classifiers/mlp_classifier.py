@@ -1,5 +1,10 @@
 from types import SimpleNamespace
 from pathlib import Path
+import numpy as np
+import os
+
+os.environ.setdefault('TF_ENABLE_ONEDNN_OPTS', '0')
+
 import matplotlib.pyplot as plt
 import tensorflow as tf
 from keras import Sequential
@@ -7,6 +12,7 @@ from keras.layers import Dense, Input
 from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, confusion_matrix,  accuracy_score,  precision_score,  recall_score,  f1_score,  roc_curve,  auc,  precision_recall_curve
+from sklearn.utils.class_weight import compute_class_weight
 import joblib
 import sys
 
@@ -34,8 +40,25 @@ def train_model_sklearn(x_train, y_train):
     # Create an MLPClassifier
     mlp_classifier = MLPClassifier(hidden_layer_sizes=(256, 64, 16), max_iter=400, random_state=42)
 
-    # Train the classifier
-    mlp_classifier.fit(x_train, y_train)
+    class_ids = np.unique(y_train)
+    class_weights = compute_class_weight(
+        class_weight='balanced',
+        classes=class_ids,
+        y=y_train,
+    )
+    balanced_indices = []
+    random_generator = np.random.default_rng(42)
+    for class_id in np.unique(y_train):
+        class_indices = np.flatnonzero(y_train == class_id)
+        target_count = int(np.max(np.bincount(y_train.astype(int))))
+        balanced_indices.extend(
+            random_generator.choice(class_indices, size=target_count, replace=True)
+        )
+    balanced_indices = np.asarray(balanced_indices)
+
+    print(f'[TRAIN] Class weights: {dict(zip(class_ids, class_weights))}')
+    print(f'[TRAIN] Balanced training samples: {len(balanced_indices)}')
+    mlp_classifier.fit(x_train[balanced_indices], y_train[balanced_indices])
     print('[TRAIN] MLP training completed.')
 
     return mlp_classifier

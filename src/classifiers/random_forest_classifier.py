@@ -69,6 +69,7 @@ def main():
     forest_classifier = RandomForestClassifier(
         random_state=42,
         n_estimators=40,
+        class_weight='balanced',
     )
     forest_classifier.fit(train_features, train_labels)
     print('[TRAIN] Random Forest training completed.')

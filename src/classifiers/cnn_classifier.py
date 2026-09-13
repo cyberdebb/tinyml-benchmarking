@@ -13,6 +13,7 @@ import tensorflow as tf
 from keras.saving import register_keras_serializable
 from pathlib import Path
 import sys
+from sklearn.utils.class_weight import compute_class_weight
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -234,6 +235,13 @@ def cnn_train(config, X, y, Xval=None, yval=None):
         raise ValueError("Validation data contains None/NaN values")
 
     print('[TRAIN] Starting model.fit...')
+    class_weights = compute_class_weight(
+        class_weight='balanced',
+        classes=np.unique(y),
+        y=y,
+    )
+    class_weight = dict(zip(np.unique(y), class_weights))
+    print(f'[TRAIN] Class weights: {class_weight}')
     model.fit(
         Xe,
         y,
@@ -243,6 +251,7 @@ def cnn_train(config, X, y, Xval=None, yval=None):
         callbacks=build_training_callbacks(config),
         initial_epoch=initial_epoch,
         verbose=1,
+        class_weight=class_weight,
     )
     print('[TRAIN] Training completed.')
     export_model(model, config.feature)
