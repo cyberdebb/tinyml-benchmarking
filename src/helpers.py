@@ -192,15 +192,19 @@ def beat_features(processed_signal, beat_time):
     
     features = []
     for column in feature_columns:
+        if column not in processed_signal:
+            features.append(0.0)
+            continue
         values = window[column]
         if column == "ECG_Clean":
             numeric_values = pd.to_numeric(values, errors="coerce").dropna()
             if numeric_values.empty:
                 features.extend([0.0, 0.0, 0.0, 0.0])
             else:
+                standard_deviation = numeric_values.std()
                 features.extend([
                     float(numeric_values.mean()),
-                    float(numeric_values.std()),
+                    float(standard_deviation) if np.isfinite(standard_deviation) else 0.0,
                     float(numeric_values.min()),
                     float(numeric_values.max()),
                 ])
@@ -220,10 +224,13 @@ def extract_neurokit_features(signals, labels):
     for signal_index, signal in enumerate(signals, start=1):
         if signal_index == 1 or signal_index % 100 == 0 or signal_index == total_signals:
             print(f'[FEATURES] Processing signal {signal_index}/{total_signals}...')
-        processed_signal, _ = nk.ecg_process(
-            np.asarray(signal),
-            sampling_rate=sampling_rate,
-        )
+        signal = np.asarray(signal, dtype=np.float32)
+        try:
+            cleaned_signal = nk.ecg_clean(signal, sampling_rate=sampling_rate)
+        except (ValueError, RuntimeError):
+            cleaned_signal = signal
+
+        processed_signal = pd.DataFrame({'ECG_Clean': cleaned_signal})
         
         feature_rows.append(beat_features(processed_signal, len(signal) / (2 * sampling_rate)))
 
