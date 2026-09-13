@@ -20,7 +20,7 @@ def export_model(model):
     output_directory.mkdir(parents=True, exist_ok=True)
     
     c_model = emlearn.convert(model, method="inline")
-    c_model.save(file=str(output_directory / "svm_model.h"), name="svm_model")
+    c_model.save(file=str(output_directory / "svm_classifier.h"), name="svm_classifier")
     print('[EXPORT] Saved SVM joblib and C header models.')
 
 

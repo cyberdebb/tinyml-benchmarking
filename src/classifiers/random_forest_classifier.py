@@ -99,7 +99,7 @@ def main():
         )
     )
     
-    model_path = Path("models/heartbeatClassifier.pickle")
+    model_path = Path("models/random_forest_classifier.pickle")
 
     with model_path.open("wb") as file:
         pickle.dump(
