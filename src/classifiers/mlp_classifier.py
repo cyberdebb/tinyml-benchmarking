@@ -10,6 +10,7 @@ from sklearn.metrics import classification_report, confusion_matrix,  accuracy_s
 import joblib
 
 from load_data import build_full_dataset, classes
+from helpers import extract_neurokit_features
 
 
 def train_model_sklearn(x_train, y_train):

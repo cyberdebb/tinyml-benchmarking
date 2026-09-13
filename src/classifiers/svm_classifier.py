@@ -8,6 +8,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 
 from load_data import build_full_dataset, classes
+from helpers import extract_neurokit_features
 
 
 def export_model(model):

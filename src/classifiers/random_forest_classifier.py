@@ -9,6 +9,7 @@ from sklearn.metrics import accuracy_score, classification_report, confusion_mat
 from sklearn.model_selection import cross_val_predict
 
 from load_data import build_full_dataset, classes
+from helpers import extract_neurokit_features
 
 
 def export_model(forest_classifier):
