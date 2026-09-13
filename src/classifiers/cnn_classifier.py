@@ -135,7 +135,7 @@ def output_block(layer, inputs, config):
     )
     model.compile(
         optimizer=adam,
-        loss='categorical_crossentropy',
+        loss='sparse_categorical_crossentropy',
         metrics=['accuracy'],
     )
     model.summary()
