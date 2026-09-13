@@ -178,11 +178,19 @@ def prepare_training_data(config, X, y, Xval, yval):
 
 def build_training_callbacks(config):
     return [
-        EarlyStopping(patience=config.patience, verbose=1),
+        EarlyStopping(
+            monitor='val_loss',
+            patience=config.patience,
+            mode='min',
+            restore_best_weights=True,
+            verbose=1,
+        ),
         ReduceLROnPlateau(
+            monitor='val_loss',
             factor=0.5,
             patience=3,
             min_lr=config.min_lr,
+            mode='min',
             verbose=1,
         ),
         TensorBoard(
@@ -192,11 +200,11 @@ def build_training_callbacks(config):
             write_images=True,
         ),
         ModelCheckpoint(
-            'models/{}-latest.keras'.format(config.feature),
+            'models/cnn_classifier.keras',
             monitor='val_loss',
-            save_best_only=False,
+            mode='min',
+            save_best_only=True,
             verbose=1,
-            save_freq=10,
         ),
     ]
 
