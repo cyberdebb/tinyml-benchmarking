@@ -8,6 +8,9 @@ from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, confusion_matrix,  accuracy_score,  precision_score,  recall_score,  f1_score,  roc_curve,  auc,  precision_recall_curve
 import joblib
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from load_data import build_full_dataset, classes
 from helpers import extract_neurokit_features
@@ -24,13 +27,16 @@ def train_model_sklearn(x_train, y_train):
     Returns:
     - mlp_classifier (MLPClassifier): Trained MLPClassifier model.
     """
-    print("Training Phase")
+    print('[TRAIN] Starting MLP training...')
+    print(f'[TRAIN] Training features shape: {x_train.shape}')
+    print(f'[TRAIN] Training labels shape: {y_train.shape}')
 
     # Create an MLPClassifier
     mlp_classifier = MLPClassifier(hidden_layer_sizes=(256, 64, 16), max_iter=400, random_state=42)
 
     # Train the classifier
     mlp_classifier.fit(x_train, y_train)
+    print('[TRAIN] MLP training completed.')
 
     return mlp_classifier
 
@@ -44,7 +50,7 @@ def evaluate_model(classifier, x_validate, y_validate, directory):
     - y_validate (numpy.ndarray): Validation labels.
     """
 
-    print("Validation Phase")
+    print('[EVALUATION] Starting MLP validation...')
 
     # Make predictions on the validation set
     y_pred = classifier.predict(x_validate)
@@ -66,6 +72,7 @@ def evaluate_model(classifier, x_validate, y_validate, directory):
     print('Precision: {:.2f}'.format(precision))
     print('Recall: {:.2f}'.format(recall))
     print('F1 Score: {:.2f}'.format(f1))
+    print('[EVALUATION] MLP validation completed.')
 
     # Precision-Recall Curve
     precision, recall, _ = precision_recall_curve(y_validate, y_pred)
@@ -149,6 +156,7 @@ def export_model(mlp_classifier):
     - mlp_classifier (MLPClassifier): Trained MLPClassifier model.
     - save_path (str): Path to save the exported model.
     """
+    print('[EXPORT] Starting MLP model export...')
     output_directory = Path('models')
     output_directory.mkdir(parents=True, exist_ok=True)
     
@@ -166,16 +174,23 @@ def export_model(mlp_classifier):
 
     converter = tf.lite.TFLiteConverter.from_keras_model(keras_model)
     (output_directory / 'mlp_classifier.tflite').write_bytes(converter.convert())
+    print('[EXPORT] Saved MLP joblib, Keras, and TFLite models.')
 
 def main():
+    print('[START] MLP classifier execution started.')
+    directory = ''
     config = SimpleNamespace(split=True, input_size=256, feature='MLII')
+    print('[DATA] Loading ECG dataset...')
     x_train, y_train, x_validate, y_validate = build_full_dataset(config)
+    print(f'[DATA] Training windows shape: {x_train.shape}')
+    print(f'[DATA] Validation windows shape: {x_validate.shape}')
     x_train, y_train = extract_neurokit_features(x_train, y_train)
     x_validate, y_validate = extract_neurokit_features(x_validate, y_validate)
 
     trained_mlp_model = train_model_sklearn(x_train, y_train)
     evaluate_model(trained_mlp_model, x_validate, y_validate, directory)
     export_model(trained_mlp_model)
+    print('[DONE] MLP classifier execution finished.')
 
 if __name__ == "__main__":
     main()

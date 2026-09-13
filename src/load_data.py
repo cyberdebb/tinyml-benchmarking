@@ -5,11 +5,14 @@ from scipy.signal import butter, sosfilt
 
 # 1. Filtro Causal (Pronto para o Edge AI / ESP32)
 def realtime_bandpass_filter(data, lowcut=0.5, highcut=45.0, fs=360.0, order=4):
+    print(f'[FILTER] Applying band-pass filter to signal with {len(data)} samples...')
     nyq = 0.5 * fs
     low = lowcut / nyq
     high = highcut / nyq
     sos = butter(order, [low, high], btype='band', output='sos')
-    return sosfilt(sos, data)
+    filtered_data = sosfilt(sos, data)
+    print('[FILTER] Band-pass filtering completed.')
+    return filtered_data
 
 # 2. Mapeamento AAMI 
 classes = ['N', 'S', 'V', 'F', 'Q']
@@ -23,6 +26,7 @@ aami_mapping = {
 
 # 3. Extração por paciente
 def load_and_segment_record(record_name, config):
+    print(f'[RECORD] Loading record {record_name}...')
     record = wfdb.rdrecord(record_name, pn_dir='mitdb')
     annotation = wfdb.rdann(record_name, 'atr', pn_dir='mitdb')
     
@@ -30,7 +34,7 @@ def load_and_segment_record(record_name, config):
     if config.feature in record.sig_name:
         channel_idx = record.sig_name.index(config.feature)
     else:
-        # Se o paciente não tiver a derivação MLII, ignoramos ele
+        print(f'[RECORD] Record {record_name} does not contain feature {config.feature}.')
         return np.array([]), np.array([])
         
     raw_signal = record.p_signal[:, channel_idx]
@@ -59,37 +63,48 @@ def load_and_segment_record(record_name, config):
                     X.append(beat_normalized)
                     y.append(aami_mapping[symbol])
             
-    return np.array(X), np.array(y)
+    X = np.asarray(X)
+    y = np.asarray(y)
+    print(f'[RECORD] Record {record_name} completed: {len(X)} valid beats extracted.')
+    return X, y
 
 
 # 4. Função principal de carregamento
 def build_full_dataset(config):
+    print('[START] Dataset loading started.')
     records = wfdb.get_record_list('mitdb')
     all_X, all_y = [], []
     
-    print(f"Extraindo sinais da derivação '{config.feature}' com janela de {config.input_size} amostras...")
+    print(f"[CONFIG] Feature: {config.feature}")
+    print(f"[CONFIG] Input window size: {config.input_size}")
+    print(f"[CONFIG] Number of records: {len(records)}")
     
-    for record_name in records:
+    for record_index, record_name in enumerate(records, start=1):
         try:
+            print(f'[DATA] Processing record {record_index}/{len(records)}: {record_name}')
             X_patient, y_patient = load_and_segment_record(record_name, config)
             if len(X_patient) > 0:
                 all_X.append(X_patient)
                 all_y.append(y_patient)
             else:
-                print(f"[Paciente {record_name} ignorado: Não possui a derivação {config.feature}]")
+                print(f'[DATA] Record {record_name} skipped because no valid beats were found.')
         except Exception as e:
-            print(f"[Erro no paciente {record_name}: {e}]")
+                print(f'[ERROR] Failed to process record {record_name}: {e}')
             
     X_total = np.concatenate(all_X, axis=0).astype(np.float32)
     y_total = np.concatenate(all_y, axis=0).astype(np.float32)
+    print(f'[DATA] Complete dataset shape: X={X_total.shape}, y={y_total.shape}')
     
     # 3. Usa a config para decidir se faz o split ou não
     if config.split:
-        print("Embaralhando e separando em treino e validação...")
+        print('[SPLIT] Splitting dataset into training and validation sets...')
         X, Xval, y, yval = train_test_split(X_total, y_total, test_size=0.2, random_state=42)
-        print(f"Treino: {X.shape} | Validação: {Xval.shape}")
+        print(f'[SPLIT] Training shapes: X={X.shape}, y={y.shape}')
+        print(f'[SPLIT] Validation shapes: X={Xval.shape}, y={yval.shape}')
+        print('[DONE] Dataset loading completed.')
         return (X, y, Xval, yval)
     else:
-        print("Split desativado. Retornando matriz unificada...")
-        print(f"Dataset Total: {X_total.shape}")
+        print('[SPLIT] Dataset split disabled.')
+        print(f'[DATA] Returning complete dataset with shape: {X_total.shape}')
+        print('[DONE] Dataset loading completed.')
         return X_total, y_total

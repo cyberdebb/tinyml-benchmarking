@@ -1,5 +1,9 @@
 import numpy as np
 from types import SimpleNamespace
+import os
+
+os.environ.setdefault('TF_ENABLE_ONEDNN_OPTS', '0')
+
 from keras import models
 from keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau, TensorBoard
 from keras.layers import Activation, BatchNormalization, Conv1D, Dense, Dropout, Flatten, Input, Lambda, MaxPooling1D, add
@@ -8,6 +12,9 @@ from keras.optimizers import Adam
 import tensorflow as tf
 from keras.saving import register_keras_serializable
 from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from load_data import build_full_dataset, classes
 from helpers import print_results
@@ -25,6 +32,7 @@ def zeropad_output_shape(input_shape):
     return tuple(shape)
 
 def export_model(model, feature):
+    print('[EXPORT] Starting model export...')
     output_directory = Path('models')
     output_directory.mkdir(parents=True, exist_ok=True)
     
@@ -37,6 +45,7 @@ def export_model(model, feature):
     tflite_path.write_bytes(tflite_model)
     print(f"Keras model saved to {keras_path}")
     print(f"TFLite model saved to {tflite_path}")
+    print('[EXPORT] Model export completed.')
 
 def first_conv_block(inputs, config):
     layer = Conv1D(
@@ -134,29 +143,36 @@ def output_block(layer, inputs, config):
 
 
 def cnn_model(config):
+    print('[MODEL] Building CNN model...')
     inputs = Input(shape=(config.input_size, 1), name='input')
     layer = first_conv_block(inputs, config)
     layer = main_loop_blocks(layer, config)
-    return output_block(layer, inputs, config)
+    model = output_block(layer, inputs, config)
+    print('[MODEL] CNN model built and compiled.')
+    return model
 
 
 def prepare_training_data(config, X, y, Xval, yval):
+    print('[DATA] Preparing training and validation data...')
     Xe = np.expand_dims(X, axis=2)
     if not config.split:
         from sklearn.model_selection import train_test_split
 
-        return train_test_split(
+        prepared_data = train_test_split(
             Xe,
             y,
             test_size=0.2,
             random_state=1,
         )
+        print('[DATA] Split created from the training data.')
+        return prepared_data
 
     Xvale = np.expand_dims(Xval, axis=2)
     print("Data shapes before training - Xe:", Xe.shape, "y:", y.shape)
     print("Val shapes before training - Xvale:", Xvale.shape, "yval:", yval.shape)
     print("Final shapes - Xe:", Xe.shape, "y:", y.shape)
     print("Final val shapes - Xvale:", Xvale.shape, "yval:", yval.shape)
+    print('[DATA] Data preparation completed.')
     return Xe, Xvale, y, yval
 
 
@@ -186,6 +202,7 @@ def build_training_callbacks(config):
 
 
 def cnn_train(config, X, y, Xval=None, yval=None):
+    print('[TRAIN] Starting CNN training pipeline...')
     print("Initial shapes - X:", X.shape, "y:", y.shape)
     print("Initial validation shapes - Xval:", Xval.shape if Xval is not None else None, "yval:", yval.shape if yval is not None else None)
     print("Any NaN in initial X:", np.any(np.isnan(X)), "y:", np.any(np.isnan(y)))
@@ -193,6 +210,7 @@ def cnn_train(config, X, y, Xval=None, yval=None):
     Xe, Xvale, y, yval = prepare_training_data(config, X, y, Xval, yval)
 
     if config.checkpoint_path is not None:
+        print(f'[MODEL] Loading checkpoint from: {config.checkpoint_path}')
         model = models.cnn_model(config.checkpoint_path)
         initial_epoch = config.resume_epoch
     else:
@@ -207,6 +225,7 @@ def cnn_train(config, X, y, Xval=None, yval=None):
     if np.any(np.isnan(Xvale)) or np.any(np.isnan(yval)):
         raise ValueError("Validation data contains None/NaN values")
 
+    print('[TRAIN] Starting model.fit...')
     model.fit(
         Xe,
         y,
@@ -215,12 +234,17 @@ def cnn_train(config, X, y, Xval=None, yval=None):
         batch_size=config.batch,
         callbacks=build_training_callbacks(config),
         initial_epoch=initial_epoch,
+        verbose=1,
     )
+    print('[TRAIN] Training completed.')
     export_model(model, config.feature)
+    print('[EVALUATION] Starting validation evaluation...')
     print_results(config, model, Xvale, yval, classes)
+    print('[EVALUATION] Validation evaluation completed.')
 
 
 def main():
+    print('[START] CNN classifier execution started.')
     config = SimpleNamespace(
         split=True,
         input_size=256,
@@ -235,8 +259,13 @@ def main():
         checkpoint_path=None,
         resume_epoch=0,
     )
+    print('[CONFIG] CNN configuration:')
+    print(vars(config))
+    print('[DATA] Loading ECG dataset...')
     X, y, Xval, yval = build_full_dataset(config)
+    print('[DATA] ECG dataset loaded successfully.')
     cnn_train(config, X, y, Xval, yval)
+    print('[DONE] CNN classifier execution finished.')
 
 if __name__ == "__main__":
     main()

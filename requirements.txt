@@ -1,2 +1,2 @@
-neurokit2
+neurokit2==0.2.9
 emlearn

@@ -6,7 +6,6 @@ from sklearn.metrics import classification_report, confusion_matrix, f1_score, p
 import sys
 import matplotlib.pyplot as plt
 import os
-import neurokit2 as nk
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -207,15 +206,26 @@ def beat_features(processed_signal, beat_time):
     return features
 
 def extract_neurokit_features(signals, labels):
-    samplig_rate = 150
-    feature_rows = []
+    import neurokit2 as nk
 
-    for signal in signals:
+    sampling_rate = 150
+    feature_rows = []
+    total_signals = len(signals)
+
+    print(f'[FEATURES] Starting NeuroKit2 extraction for {total_signals} signals...')
+
+    for signal_index, signal in enumerate(signals, start=1):
+        if signal_index == 1 or signal_index % 100 == 0 or signal_index == total_signals:
+            print(f'[FEATURES] Processing signal {signal_index}/{total_signals}...')
         processed_signal, _ = nk.ecg_process(
             np.asarray(signal),
-            sampling_rate=samplig_rate,
+            sampling_rate=sampling_rate,
         )
         
-        feature_rows.append(beat_features(processed_signal, len(signal) / (2 * samplig_rate)))
+        feature_rows.append(beat_features(processed_signal, len(signal) / (2 * sampling_rate)))
 
-    return np.asarray(feature_rows, dtype=np.float32), np.asarray(labels)
+    features = np.asarray(feature_rows, dtype=np.float32)
+    labels = np.asarray(labels)
+    print(f'[FEATURES] Extraction completed. Feature matrix shape: {features.shape}')
+    print(f'[FEATURES] Labels shape: {labels.shape}')
+    return features, labels
