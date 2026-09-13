@@ -24,18 +24,25 @@ def export_model(model):
     print('[EXPORT] Saved SVM joblib and C header models.')
 
 
-def train_svm(x_train, y_train, C_value=0.001, gamma_value=0.0):
+def train_svm(x_train, y_train, C_value=1.0, gamma_value=0.0):
     print('[TRAIN] Starting SVM training...')
     print(f'[TRAIN] Training features shape: {x_train.shape}')
     print(f'[TRAIN] Training labels shape: {y_train.shape}')
-    gamma = "auto" if gamma_value == 0.0 else gamma_value
+    gamma = "scale" if gamma_value == 0.0 else gamma_value
+    class_ids, class_counts = np.unique(y_train, return_counts=True)
+    maximum_count = np.max(class_counts)
+    class_weight = {
+        class_id: float(np.sqrt(maximum_count / count))
+        for class_id, count in zip(class_ids, class_counts)
+    }
+    print(f'[TRAIN] Smoothed class weights: {class_weight}')
     model = make_pipeline(
         StandardScaler(),
         SVC(
             C=C_value,
             gamma=gamma,
             kernel="rbf",
-            class_weight="balanced",
+            class_weight=class_weight,
             decision_function_shape="ovo",
             probability=False,
             max_iter=10000,
@@ -66,9 +73,10 @@ def evaluate_model(model, x_test, y_test):
     print('[EVALUATION] SVM evaluation completed.')
 
 
-def main(C_value=0.001, gamma_value=0.0):
+def main(C_value=1.0, gamma_value=0.0):
     print('[START] SVM classifier execution started.')
     model_path = Path("models/svm_classifier.joblib")
+    model_path.parent.mkdir(parents=True, exist_ok=True)
     
     config = type("SVMConfig", (), {
         "split": True,
@@ -87,7 +95,6 @@ def main(C_value=0.001, gamma_value=0.0):
     model = train_svm(x_train, y_train, C_value, gamma_value)
     evaluate_model(model, x_test, y_test)
 
-    model_path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(model, model_path)
     export_model(model)
     print(f"Model saved to {model_path}")

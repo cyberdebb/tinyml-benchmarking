@@ -174,43 +174,34 @@ def numeric_value(values, default=0.0):
     return float(numeric_values[-1]) if len(numeric_values) else default
 
 def beat_features(processed_signal, beat_time):
-    samplig_rate = 150
+    sampling_rate = 150
     beat_window_seconds = 0.6
-    beat_index = int(round(beat_time * samplig_rate))
-    half_window = int(beat_window_seconds * samplig_rate / 2)
+    beat_index = int(round(beat_time * sampling_rate))
+    half_window = int(beat_window_seconds * sampling_rate / 2)
     start = max(0, beat_index - half_window)
     end = min(len(processed_signal), beat_index + half_window)
-    window = processed_signal.iloc[start:end]
+    signal = pd.to_numeric(processed_signal['ECG_Clean'], errors='coerce').dropna().to_numpy()
+    window = signal[start:end]
 
-    feature_columns = (
-        "ECG_Clean",
-        "ECG_Rate",
-        "ECG_Quality",
-        "ECG_Phase_Atrial",
-        "ECG_Phase_Ventricular",
-    )
-    
-    features = []
-    for column in feature_columns:
-        if column not in processed_signal:
-            features.append(0.0)
-            continue
-        values = window[column]
-        if column == "ECG_Clean":
-            numeric_values = pd.to_numeric(values, errors="coerce").dropna()
-            if numeric_values.empty:
-                features.extend([0.0, 0.0, 0.0, 0.0])
-            else:
-                standard_deviation = numeric_values.std()
-                features.extend([
-                    float(numeric_values.mean()),
-                    float(standard_deviation) if np.isfinite(standard_deviation) else 0.0,
-                    float(numeric_values.min()),
-                    float(numeric_values.max()),
-                ])
-        else:
-            features.append(numeric_value(values))
-    return features
+    if len(window) == 0:
+        return [0.0] * 12
+
+    centered_window = window - np.mean(window)
+    derivative = np.diff(window)
+    return [
+        float(np.mean(window)),
+        float(np.std(window)),
+        float(np.min(window)),
+        float(np.max(window)),
+        float(np.ptp(window)),
+        float(np.median(window)),
+        float(np.mean(window ** 2)),
+        float(np.mean(np.abs(centered_window))),
+        float(np.max(np.abs(derivative))) if len(derivative) else 0.0,
+        float(np.percentile(window, 10)),
+        float(np.percentile(window, 90)),
+        float(np.argmax(window) / len(window)),
+    ]
 
 def extract_neurokit_features(signals, labels):
     import neurokit2 as nk
