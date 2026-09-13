@@ -22,7 +22,7 @@ from load_data import build_full_dataset, classes
 from helpers import extract_neurokit_features
 
 
-def train_model_sklearn(x_train, y_train):
+def train_model_sklearn(x_train, y_train, x_validate, y_validate):
     """
     Train an MLPClassifier model using scikit-learn.
 
@@ -38,7 +38,13 @@ def train_model_sklearn(x_train, y_train):
     print(f'[TRAIN] Training labels shape: {y_train.shape}')
 
     # Create an MLPClassifier
-    mlp_classifier = MLPClassifier(hidden_layer_sizes=(256, 64, 16), max_iter=400, random_state=42)
+    mlp_classifier = MLPClassifier(
+        hidden_layer_sizes=(256, 64, 16),
+        max_iter=1,
+        random_state=42,
+        warm_start=True,
+        early_stopping=False,
+    )
 
     class_ids = np.unique(y_train)
     class_weights = compute_class_weight(
@@ -56,9 +62,52 @@ def train_model_sklearn(x_train, y_train):
         )
     balanced_indices = np.asarray(balanced_indices)
 
+    balanced_x_train = x_train[balanced_indices]
+    balanced_y_train = y_train[balanced_indices]
     print(f'[TRAIN] Class weights: {dict(zip(class_ids, class_weights))}')
     print(f'[TRAIN] Balanced training samples: {len(balanced_indices)}')
-    mlp_classifier.fit(x_train[balanced_indices], y_train[balanced_indices])
+
+    best_validation_accuracy = -np.inf
+    epochs_without_improvement = 0
+    best_coefs = None
+    best_intercepts = None
+    max_epochs = 400
+    early_stopping_patience = 10
+
+    for epoch in range(max_epochs):
+        mlp_classifier.fit(balanced_x_train, balanced_y_train)
+        train_accuracy = accuracy_score(
+            balanced_y_train,
+            mlp_classifier.predict(balanced_x_train),
+        )
+        validation_accuracy = accuracy_score(
+            y_validate,
+            mlp_classifier.predict(x_validate),
+        )
+        print(
+            f'[TRAIN] Epoch {epoch + 1}/{max_epochs} - '
+            f'loss: {mlp_classifier.loss_:.6f} - '
+            f'train_accuracy: {train_accuracy:.4f} - '
+            f'validation_accuracy: {validation_accuracy:.4f}'
+        )
+
+        if validation_accuracy > best_validation_accuracy:
+            best_validation_accuracy = validation_accuracy
+            epochs_without_improvement = 0
+            best_coefs = [weights.copy() for weights in mlp_classifier.coefs_]
+            best_intercepts = [bias.copy() for bias in mlp_classifier.intercepts_]
+        else:
+            epochs_without_improvement += 1
+
+        if epochs_without_improvement >= early_stopping_patience:
+            print(
+                f'[TRAIN] Early stopping at epoch {epoch + 1}. '
+                f'Best validation accuracy: {best_validation_accuracy:.4f}'
+            )
+            break
+
+            mlp_classifier.coefs_ = best_coefs
+            mlp_classifier.intercepts_ = best_intercepts
     print('[TRAIN] MLP training completed.')
 
     return mlp_classifier
@@ -88,9 +137,9 @@ def evaluate_model(classifier, x_validate, y_validate, directory):
     print(cm)
 
     # Precision, Recall, F1 Score
-    precision = precision_score(y_validate, y_pred)
-    recall = recall_score(y_validate, y_pred)
-    f1 = f1_score(y_validate, y_pred)
+    precision = precision_score(y_validate, y_pred, average='weighted', zero_division=0)
+    recall = recall_score(y_validate, y_pred, average='weighted', zero_division=0)
+    f1 = f1_score(y_validate, y_pred, average='weighted', zero_division=0)
 
     print('Precision: {:.2f}'.format(precision))
     print('Recall: {:.2f}'.format(recall))
@@ -142,9 +191,9 @@ def test_model(classifier, x_test, y_test, directory):
     print(cm)
 
     # Precision, Recall, F1 Score
-    precision = precision_score(y_test, y_pred)
-    recall = recall_score(y_test, y_pred)
-    f1 = f1_score(y_test, y_pred)
+    precision = precision_score(y_test, y_pred, average='weighted', zero_division=0)
+    recall = recall_score(y_test, y_pred, average='weighted', zero_division=0)
+    f1 = f1_score(y_test, y_pred, average='weighted', zero_division=0)
 
     print('\nPrecision: {:.2f}'.format(precision))
     print('Recall: {:.2f}'.format(recall))
@@ -210,7 +259,12 @@ def main():
     x_train, y_train = extract_neurokit_features(x_train, y_train)
     x_validate, y_validate = extract_neurokit_features(x_validate, y_validate)
 
-    trained_mlp_model = train_model_sklearn(x_train, y_train)
+    trained_mlp_model = train_model_sklearn(
+        x_train,
+        y_train,
+        x_validate,
+        y_validate,
+    )
     evaluate_model(trained_mlp_model, x_validate, y_validate, directory)
     export_model(trained_mlp_model)
     print('[DONE] MLP classifier execution finished.')

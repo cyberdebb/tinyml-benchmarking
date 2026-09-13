@@ -37,6 +37,9 @@ def train_svm(x_train, y_train, C_value=0.001, gamma_value=0.0):
             kernel="rbf",
             class_weight="balanced",
             decision_function_shape="ovo",
+            probability=False,
+            max_iter=10000,
+            verbose=True,
         ),
     )
     model.fit(x_train, y_train)

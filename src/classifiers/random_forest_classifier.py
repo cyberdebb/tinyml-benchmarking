@@ -67,9 +67,13 @@ def main():
 
     print("Training model...")
     forest_classifier = RandomForestClassifier(
-        random_state=42,
         n_estimators=40,
+        max_depth=20,
+        min_samples_leaf=2,
+        max_features='sqrt',
         class_weight='balanced',
+        random_state=42,
+        verbose=1,
     )
     forest_classifier.fit(train_features, train_labels)
     print('[TRAIN] Random Forest training completed.')
