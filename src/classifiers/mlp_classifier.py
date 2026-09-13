@@ -10,7 +10,6 @@ from sklearn.metrics import classification_report, confusion_matrix,  accuracy_s
 import joblib
 
 from load_data import build_full_dataset, classes
-from helpers import extract_neurokit_features, mkdir_recursive
 
 
 def train_model_sklearn(x_train, y_train):
@@ -141,7 +140,7 @@ def test_model(classifier, x_test, y_test, directory):
     plt.legend(loc="lower right")
     plt.savefig(f"{directory}/reports/figures/test_roc_curve.png")
 
-def export_model(mlp_classifier, directory):
+def export_model(mlp_classifier):
     """
     Export the trained model for serving predictions.
 
@@ -149,8 +148,9 @@ def export_model(mlp_classifier, directory):
     - mlp_classifier (MLPClassifier): Trained MLPClassifier model.
     - save_path (str): Path to save the exported model.
     """
-    output_directory = Path(directory) / 'models'
+    output_directory = Path('models')
     output_directory.mkdir(parents=True, exist_ok=True)
+    
     joblib.dump(mlp_classifier, output_directory / 'mlp_classifier.joblib')
 
     keras_model = Sequential([Input(shape=(mlp_classifier.n_features_in_,))])
@@ -167,8 +167,6 @@ def export_model(mlp_classifier, directory):
     (output_directory / 'mlp_classifier.tflite').write_bytes(converter.convert())
 
 def main():
-    mkdir_recursive('models')
-    directory = 'models'
     config = SimpleNamespace(split=True, input_size=256, feature='MLII')
     x_train, y_train, x_validate, y_validate = build_full_dataset(config)
     x_train, y_train = extract_neurokit_features(x_train, y_train)
@@ -176,7 +174,7 @@ def main():
 
     trained_mlp_model = train_model_sklearn(x_train, y_train)
     evaluate_model(trained_mlp_model, x_validate, y_validate, directory)
-    export_model(trained_mlp_model, directory)
+    export_model(trained_mlp_model)
 
 if __name__ == "__main__":
     main()

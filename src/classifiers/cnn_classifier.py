@@ -10,7 +10,6 @@ from keras.saving import register_keras_serializable
 from pathlib import Path
 
 from load_data import build_full_dataset, classes
-from helpers import print_results, mkdir_recursive, zeropad, zeropad_output_shape
 
 @register_keras_serializable(package="custom")
 def zeropad(x):
@@ -24,10 +23,10 @@ def zeropad_output_shape(input_shape):
     shape[2] *= 2
     return tuple(shape)
 
-def export_model(model, directory, feature):
-    output_directory = Path(directory)
+def export_model(model, feature):
+    output_directory = Path('models')
     output_directory.mkdir(parents=True, exist_ok=True)
-
+    
     keras_path = output_directory / f'{feature}-latest.keras'
     tflite_path = output_directory / f'{feature}-latest.tflite'
     model.save(keras_path)
@@ -199,7 +198,8 @@ def cnn_train(config, X, y, Xval=None, yval=None):
         model = cnn_model(config)
         initial_epoch = 0
 
-    mkdir_recursive('models')
+    output_directory = Path('models')
+    output_directory.mkdir(parents=True, exist_ok=True)
 
     if np.any(np.isnan(Xe)) or np.any(np.isnan(y)):
         raise ValueError("Input data contains None/NaN values")
@@ -215,7 +215,7 @@ def cnn_train(config, X, y, Xval=None, yval=None):
         callbacks=build_training_callbacks(config),
         initial_epoch=initial_epoch,
     )
-    export_model(model, 'models', config.feature)
+    export_model(model, config.feature)
     print_results(config, model, Xvale, yval, classes)
 
 

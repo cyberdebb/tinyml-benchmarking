@@ -8,13 +8,12 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 
 from load_data import build_full_dataset, classes
-from helpers import extract_neurokit_features, mkdir_recursive
 
 
 def export_model(model):
-    mkdir_recursive('models')
-    output_directory = Path("models")
+    output_directory = Path('models')
     output_directory.mkdir(parents=True, exist_ok=True)
+    
     c_model = emlearn.convert(model, method="inline")
     c_model.save(file=str(output_directory / "svm_model.h"), name="svm_model")
 

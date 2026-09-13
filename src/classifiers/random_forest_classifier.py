@@ -9,13 +9,12 @@ from sklearn.metrics import accuracy_score, classification_report, confusion_mat
 from sklearn.model_selection import cross_val_predict
 
 from load_data import build_full_dataset, classes
-from helpers import extract_neurokit_features, mkdir_recursive
 
 
 def export_model(forest_classifier):
-    mkdir_recursive('models')
-    output_directory = Path("models")
+    output_directory = Path('models')
     output_directory.mkdir(parents=True, exist_ok=True)
+
     c_model = emlearn.convert(forest_classifier, method="inline")
     c_model.save(file=str(output_directory / "random_forest_model.h"), name="random_forest")
 

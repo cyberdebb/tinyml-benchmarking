@@ -9,17 +9,8 @@ import os
 import neurokit2 as nk
 import numpy as np
 import pandas as pd
+from pathlib import Path
 
-
-def mkdir_recursive(path):
-  if path == "":
-    return
-  sub_path = os.path.dirname(path)
-  if not os.path.exists(sub_path):
-    mkdir_recursive(sub_path)
-  if not os.path.exists(path):
-    print("Creating directory " + path)
-    os.mkdir(path)
 
 def plot_confusion_matrix(y_true, y_pred, classes, feature,
                           normalize=False,
@@ -61,7 +52,8 @@ def plot_confusion_matrix(y_true, y_pred, classes, feature,
                     ha="center", va="center",
                     color="white" if cm[i, j] > thresh else "black")
     fig.tight_layout()
-    mkdir_recursive('results')
+    output_directory = Path('resuls')
+    output_directory.mkdir(parents=True, exist_ok=True)
     fig.savefig('results/confusionMatrix-' + feature + '.eps', format='eps', dpi=1000)
     return ax
 
@@ -107,7 +99,8 @@ def PR_ROC_curves(ytrue, ypred, classes, ypred_mat):
         cax2.set_ylabel('Sensitivity')
         cax2.legend(loc=4)
 
-    mkdir_recursive("results")
+    output_directory = Path('resuls')
+    output_directory.mkdir(parents=True, exist_ok=True)
     plt.savefig("results/model_prec_recall_and_roc.eps",
         dpi=400,
         format='eps',
