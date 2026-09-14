@@ -12,13 +12,14 @@ from keras.layers import Dense, Input
 from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, confusion_matrix,  accuracy_score,  precision_score,  recall_score,  f1_score,  roc_curve,  auc,  precision_recall_curve
+from sklearn.preprocessing import label_binarize
 from sklearn.utils.class_weight import compute_class_weight
 import joblib
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from load_data import build_full_dataset
+from load_data import build_full_dataset, classes
 from helpers import extract_neurokit_features
 
 
@@ -144,28 +145,41 @@ def evaluate_model(classifier, x_validate, y_validate, directory):
     print('Precision: {:.2f}'.format(precision))
     print('Recall: {:.2f}'.format(recall))
     print('F1 Score: {:.2f}'.format(f1))
-    print('[EVALUATION] MLP validation completed.')
+    y_score = classifier.predict_proba(x_validate)
+    y_validate_binarized = label_binarize(y_validate, classes=classifier.classes_)
 
-    # Precision-Recall Curve
-    precision, recall, _ = precision_recall_curve(y_validate, y_pred)
+    # Precision-Recall Curve for each class in the multiclass problem.
     plt.figure()
-    plt.plot(recall, precision, color='darkorange', lw=2)
+    for class_index, class_name in enumerate(classes):
+        class_precision, class_recall, _ = precision_recall_curve(
+            y_validate_binarized[:, class_index],
+            y_score[:, class_index],
+        )
+        plt.plot(class_recall, class_precision, lw=2, label=class_name)
     plt.xlabel('Recall')
     plt.ylabel('Precision')
     plt.title('Precision-Recall Curve')
+    plt.legend(loc='best')
     plt.savefig(f"{directory}/reports/figures/precision_recall_curve.png")
+    plt.close()
 
-    # ROC Curve
-    fpr, tpr, _ = roc_curve(y_validate, y_pred)
-    roc_auc = auc(fpr, tpr)
+    # ROC Curve for each class in the multiclass problem.
     plt.figure()
-    plt.plot(fpr, tpr, color='darkorange', lw=2, label='ROC curve (area = {:.2f})'.format(roc_auc))
+    for class_index, class_name in enumerate(classes):
+        fpr, tpr, _ = roc_curve(
+            y_validate_binarized[:, class_index],
+            y_score[:, class_index],
+        )
+        roc_auc = auc(fpr, tpr)
+        plt.plot(fpr, tpr, lw=2, label=f'{class_name} (area = {roc_auc:.2f})')
     plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
     plt.xlabel('False Positive Rate')
     plt.ylabel('True Positive Rate')
     plt.title('Receiver Operating Characteristic Curve')
-    plt.legend(loc="lower right")
+    plt.legend(loc='lower right')
     plt.savefig(f"{directory}/reports/figures/roc_curve.png")
+    plt.close()
+    print('[EVALUATION] MLP validation completed.')
 
 def test_model(classifier, x_test, y_test, directory):
     """
@@ -199,26 +213,40 @@ def test_model(classifier, x_test, y_test, directory):
     print('Recall: {:.2f}'.format(recall))
     print('F1 Score: {:.2f}'.format(f1))
 
-    # Precision-Recall Curve
-    precision, recall, _ = precision_recall_curve(y_test, y_pred)
+    y_score = classifier.predict_proba(x_test)
+    y_test_binarized = label_binarize(y_test, classes=classifier.classes_)
+
+    # Precision-Recall Curve for each class in the multiclass problem.
     plt.figure()
-    plt.plot(recall, precision, color='darkorange', lw=2)
+    for class_index, class_name in enumerate(classes):
+        class_precision, class_recall, _ = precision_recall_curve(
+            y_test_binarized[:, class_index],
+            y_score[:, class_index],
+        )
+        plt.plot(class_recall, class_precision, lw=2, label=class_name)
     plt.xlabel('Recall')
     plt.ylabel('Precision')
     plt.title('Precision-Recall Curve')
+    plt.legend(loc='best')
     plt.savefig(f"{directory}/reports/figures/test_precision_recall_curve.png")
+    plt.close()
 
-    # ROC Curve
-    fpr, tpr, _ = roc_curve(y_test, y_pred)
-    roc_auc = auc(fpr, tpr)
+    # ROC Curve for each class in the multiclass problem.
     plt.figure()
-    plt.plot(fpr, tpr, color='darkorange', lw=2, label='ROC curve (area = {:.2f})'.format(roc_auc))
+    for class_index, class_name in enumerate(classes):
+        fpr, tpr, _ = roc_curve(
+            y_test_binarized[:, class_index],
+            y_score[:, class_index],
+        )
+        roc_auc = auc(fpr, tpr)
+        plt.plot(fpr, tpr, lw=2, label=f'{class_name} (area = {roc_auc:.2f})')
     plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
     plt.xlabel('False Positive Rate')
     plt.ylabel('True Positive Rate')
     plt.title('Receiver Operating Characteristic Curve')
-    plt.legend(loc="lower right")
+    plt.legend(loc='lower right')
     plt.savefig(f"{directory}/reports/figures/test_roc_curve.png")
+    plt.close()
 
 def export_model(mlp_classifier):
     """
