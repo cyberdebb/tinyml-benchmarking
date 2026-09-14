@@ -1,6 +1,5 @@
 from pathlib import Path
 import joblib
-import emlearn
 import numpy as np
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 from sklearn.pipeline import make_pipeline
@@ -18,10 +17,23 @@ def export_model(model):
     print('[EXPORT] Starting SVM export...')
     output_directory = Path('models')
     output_directory.mkdir(parents=True, exist_ok=True)
-    
-    c_model = emlearn.convert(model, method="inline")
-    c_model.save(file=str(output_directory / "svm_classifier.h"), name="svm_classifier")
-    print('[EXPORT] Saved SVM joblib and C header models.')
+
+    scaler = model.named_steps['standardscaler']
+    scaler_header = output_directory / 'svm_scaler.h'
+    mean_values = ', '.join(f'{value:.9g}f' for value in scaler.mean_)
+    scale_values = ', '.join(f'{value:.9g}f' for value in scaler.scale_)
+    scaler_header.write_text(
+        '#ifndef SVM_SCALER_H\n'
+        '#define SVM_SCALER_H\n\n'
+        f'#define SVM_FEATURE_COUNT {len(scaler.mean_)}\n'
+        f'static const float svm_scaler_mean[SVM_FEATURE_COUNT] = {{{mean_values}}};\n'
+        f'static const float svm_scaler_scale[SVM_FEATURE_COUNT] = {{{scale_values}}};\n\n'
+        '#endif\n',
+        encoding='ascii',
+    )
+    print(f'[EXPORT] Saved SVM pipeline to models/svm_classifier.joblib.')
+    print(f'[EXPORT] Saved StandardScaler parameters to {scaler_header}.')
+    print('[EXPORT] emlearn does not support sklearn SVC; no SVM classifier C header was generated.')
 
 
 def train_svm(x_train, y_train, C_value=1.0, gamma_value=0.0):
