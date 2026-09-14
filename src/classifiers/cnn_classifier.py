@@ -32,13 +32,13 @@ def zeropad_output_shape(input_shape):
     shape[2] *= 2
     return tuple(shape)
 
-def export_model(model, feature):
+def export_model(model):
     print('[EXPORT] Starting model export...')
     output_directory = Path('models')
     output_directory.mkdir(parents=True, exist_ok=True)
     
-    keras_path = output_directory / f'{feature}-latest.keras'
-    tflite_path = output_directory / f'{feature}-latest.tflite'
+    keras_path = output_directory / f'cnn_classifier.keras'
+    tflite_path = output_directory / f'cnn_classifier.tflite'
     model.save(keras_path)
 
     converter = tf.lite.TFLiteConverter.from_keras_model(model)
@@ -254,7 +254,7 @@ def cnn_train(config, X, y, Xval=None, yval=None):
         class_weight=class_weight,
     )
     print('[TRAIN] Training completed.')
-    export_model(model, config.feature)
+    export_model(model)
     print('[EVALUATION] Starting validation evaluation...')
     print_results(config, model, Xvale, yval, classes)
     print('[EVALUATION] Validation evaluation completed.')
