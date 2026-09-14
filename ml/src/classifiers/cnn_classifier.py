@@ -17,8 +17,8 @@ from sklearn.utils.class_weight import compute_class_weight
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from load_data import build_full_dataset, classes
-from helpers import print_results
+from ml.src.load_data import build_full_dataset, classes
+from ml.src.helpers import print_results
 
 @register_keras_serializable(package="custom")
 def zeropad(x):

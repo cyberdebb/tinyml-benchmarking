@@ -4,7 +4,7 @@ os.environ.setdefault('TF_ENABLE_ONEDNN_OPTS', '0')
 
 import matplotlib.pyplot as plt
 import numpy as np
-from load_data import aami_mapping, classes
+from ml.src.load_data import aami_mapping, classes
 from keras import models
 from sklearn.metrics import classification_report, confusion_matrix, f1_score, precision_recall_curve, roc_auc_score, roc_curve
 import sys

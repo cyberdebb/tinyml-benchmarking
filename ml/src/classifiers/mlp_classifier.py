@@ -18,8 +18,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from load_data import build_full_dataset, classes
-from helpers import extract_neurokit_features
+from ml.src.load_data import build_full_dataset, classes
+from ml.src.helpers import extract_neurokit_features
 
 
 def train_model_sklearn(x_train, y_train, x_validate, y_validate):
