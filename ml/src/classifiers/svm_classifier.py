@@ -7,10 +7,11 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 import sys
 
+# Add the source directory so the local module imports below resolve reliably.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from ml.src.load_data import build_full_dataset, classes
-from ml.src.helpers import extract_neurokit_features
+from load_data import build_full_dataset, classes
+from helpers import extract_neurokit_features
 
 
 def export_model(model):
