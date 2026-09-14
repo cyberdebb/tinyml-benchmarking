@@ -124,6 +124,8 @@ def evaluate_model(classifier, x_validate, y_validate, directory):
     """
 
     print('[EVALUATION] Starting MLP validation...')
+    figures_directory = Path(directory) / 'reports' / 'figures'
+    figures_directory.mkdir(parents=True, exist_ok=True)
 
     # Make predictions on the validation set
     y_pred = classifier.predict(x_validate)
@@ -160,7 +162,7 @@ def evaluate_model(classifier, x_validate, y_validate, directory):
     plt.ylabel('Precision')
     plt.title('Precision-Recall Curve')
     plt.legend(loc='best')
-    plt.savefig(f"{directory}/reports/figures/precision_recall_curve.png")
+    plt.savefig(figures_directory / 'precision_recall_curve.png')
     plt.close()
 
     # ROC Curve for each class in the multiclass problem.
@@ -177,7 +179,7 @@ def evaluate_model(classifier, x_validate, y_validate, directory):
     plt.ylabel('True Positive Rate')
     plt.title('Receiver Operating Characteristic Curve')
     plt.legend(loc='lower right')
-    plt.savefig(f"{directory}/reports/figures/roc_curve.png")
+    plt.savefig(figures_directory / 'roc_curve.png')
     plt.close()
     print('[EVALUATION] MLP validation completed.')
 
@@ -191,6 +193,8 @@ def test_model(classifier, x_test, y_test, directory):
     - y_test (numpy.ndarray): Test labels.
     """
     print("Testing Phase")
+    figures_directory = Path(directory) / 'reports' / 'figures'
+    figures_directory.mkdir(parents=True, exist_ok=True)
 
     # Make predictions on the test set
     y_pred = classifier.predict(x_test)
@@ -228,7 +232,7 @@ def test_model(classifier, x_test, y_test, directory):
     plt.ylabel('Precision')
     plt.title('Precision-Recall Curve')
     plt.legend(loc='best')
-    plt.savefig(f"{directory}/reports/figures/test_precision_recall_curve.png")
+    plt.savefig(figures_directory / 'test_precision_recall_curve.png')
     plt.close()
 
     # ROC Curve for each class in the multiclass problem.
@@ -245,7 +249,7 @@ def test_model(classifier, x_test, y_test, directory):
     plt.ylabel('True Positive Rate')
     plt.title('Receiver Operating Characteristic Curve')
     plt.legend(loc='lower right')
-    plt.savefig(f"{directory}/reports/figures/test_roc_curve.png")
+    plt.savefig(figures_directory / 'test_roc_curve.png')
     plt.close()
 
 def export_model(mlp_classifier):
