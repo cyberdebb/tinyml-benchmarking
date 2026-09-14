@@ -21,8 +21,8 @@ def export_model(forest_classifier):
     output_directory.mkdir(parents=True, exist_ok=True)
 
     c_model = emlearn.convert(forest_classifier, method="inline")
-    c_model.save(file=str(output_directory / "random_forest_model.h"), name="random_forest")
-    print('[EXPORT] Saved Random Forest pickle and C header model.')
+    c_model.save(file=str(output_directory / "random_forest_classifier.h"), name="random_forest")
+    print('[EXPORT] Saved Random Forest C header model.')
 
 def leave_one_record_out(sources):
     for source in np.unique(sources):

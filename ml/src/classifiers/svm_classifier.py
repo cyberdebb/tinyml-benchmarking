@@ -20,7 +20,7 @@ def export_model(model):
     output_directory.mkdir(parents=True, exist_ok=True)
 
     scaler = model.named_steps['standardscaler']
-    scaler_header = output_directory / 'svm_scaler.h'
+    scaler_header = output_directory / 'svm_classifier.h'
     mean_values = ', '.join(f'{value:.9g}f' for value in scaler.mean_)
     scale_values = ', '.join(f'{value:.9g}f' for value in scaler.scale_)
     scaler_header.write_text(
@@ -32,7 +32,6 @@ def export_model(model):
         '#endif\n',
         encoding='ascii',
     )
-    print(f'[EXPORT] Saved SVM pipeline to models/svm_classifier.joblib.')
     print(f'[EXPORT] Saved StandardScaler parameters to {scaler_header}.')
     print('[EXPORT] emlearn does not support sklearn SVC; no SVM classifier C header was generated.')
 
