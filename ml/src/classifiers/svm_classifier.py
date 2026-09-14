@@ -11,7 +11,82 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from load_data import build_full_dataset, classes
-from helpers import extract_neurokit_features
+
+
+def _format_float(value):
+    return f'{float(value):.9g}f'
+
+
+def _write_rows(file, values):
+    for row in np.asarray(values):
+        file.write('  {' + ','.join(_format_float(value) for value in row) + '},\n')
+
+
+def export_classifier_header(model, output_directory):
+    classifier = model.named_steps['svc']
+    support_vectors = classifier.support_vectors_
+    support_counts = classifier.n_support_
+    support_starts = np.concatenate(([0], np.cumsum(support_counts)[:-1]))
+    class_count = len(classifier.classes_)
+    pair_count = class_count * (class_count - 1) // 2
+
+    classifier_header = output_directory / 'svm_classifier.h'
+    with classifier_header.open('w', encoding='ascii', newline='\n') as file:
+        file.write(
+            '#ifndef SVM_CLASSIFIER_H\n'
+            '#define SVM_CLASSIFIER_H\n'
+            '#include <math.h>\n'
+            '#include <stdint.h>\n'
+            f'#define SVM_CLASS_COUNT {class_count}\n'
+            f'#define SVM_FEATURE_COUNT {support_vectors.shape[1]}\n'
+            f'#define SVM_SUPPORT_VECTOR_COUNT {len(support_vectors)}\n'
+            f'#define SVM_PAIR_COUNT {pair_count}\n'
+            f'#define SVM_GAMMA {_format_float(classifier._gamma)}\n'
+            'static const int32_t svm_n_support[SVM_CLASS_COUNT] = {'
+            + ','.join(str(int(value)) for value in support_counts)
+            + '};\n'
+            'static const int32_t svm_support_start[SVM_CLASS_COUNT] = {'
+            + ','.join(str(int(value)) for value in support_starts)
+            + '};\n'
+            'static const float svm_support_vectors[SVM_SUPPORT_VECTOR_COUNT][SVM_FEATURE_COUNT] = {\n'
+        )
+        _write_rows(file, support_vectors)
+        file.write('};\n')
+        file.write(
+            'static const float svm_dual_coef[SVM_CLASS_COUNT - 1][SVM_SUPPORT_VECTOR_COUNT] = {\n'
+        )
+        _write_rows(file, classifier.dual_coef_)
+        file.write('};\n')
+        file.write(
+            'static const float svm_intercept[SVM_PAIR_COUNT] = {'
+            + ','.join(_format_float(value) for value in classifier.intercept_)
+            + '};\n'
+            'static inline int svm_predict(const float *features) {\n'
+            '    int votes[SVM_CLASS_COUNT] = {0};\n'
+            '    int pair = 0;\n'
+            '    for (int i = 0; i < SVM_CLASS_COUNT; ++i) {\n'
+            '        for (int j = i + 1; j < SVM_CLASS_COUNT; ++j, ++pair) {\n'
+            '            float sum = svm_intercept[pair];\n'
+            '            for (int k = 0; k < SVM_SUPPORT_VECTOR_COUNT; ++k) {\n'
+            '                float distance = 0.0f;\n'
+            '                for (int f = 0; f < SVM_FEATURE_COUNT; ++f) {\n'
+            '                    float delta = features[f] - svm_support_vectors[k][f];\n'
+            '                    distance += delta * delta;\n'
+            '                }\n'
+            '                sum += svm_dual_coef[j - 1][k] * expf(-SVM_GAMMA * distance);\n'
+            '            }\n'
+            '            if (sum > 0.0f) ++votes[i]; else ++votes[j];\n'
+            '        }\n'
+            '    }\n'
+            '    int best = 0;\n'
+            '    for (int i = 1; i < SVM_CLASS_COUNT; ++i) {\n'
+            '        if (votes[i] > votes[best]) best = i;\n'
+            '    }\n'
+            '    return best;\n'
+            '}\n'
+            '#endif\n'
+        )
+    print(f'[EXPORT] Saved SVM classifier C header to {classifier_header}.')
 
 
 def export_model(model):
@@ -20,20 +95,22 @@ def export_model(model):
     output_directory.mkdir(parents=True, exist_ok=True)
 
     scaler = model.named_steps['standardscaler']
-    scaler_header = output_directory / 'svm_classifier.h'
+    scaler_header = output_directory / 'svm_classifier_scaler.h'
     mean_values = ', '.join(f'{value:.9g}f' for value in scaler.mean_)
     scale_values = ', '.join(f'{value:.9g}f' for value in scaler.scale_)
     scaler_header.write_text(
-        '#ifndef SVM_SCALER_H\n'
-        '#define SVM_SCALER_H\n\n'
+        '#ifndef SVM_CLASSIFIER_SCALER_H\n'
+        '#define SVM_CLASSIFIER_SCALER_H\n\n'
+        f'#ifndef SVM_FEATURE_COUNT\n'
         f'#define SVM_FEATURE_COUNT {len(scaler.mean_)}\n'
+        f'#endif\n'
         f'static const float svm_scaler_mean[SVM_FEATURE_COUNT] = {{{mean_values}}};\n'
         f'static const float svm_scaler_scale[SVM_FEATURE_COUNT] = {{{scale_values}}};\n\n'
         '#endif\n',
         encoding='ascii',
     )
+    export_classifier_header(model, output_directory)
     print(f'[EXPORT] Saved StandardScaler parameters to {scaler_header}.')
-    print('[EXPORT] emlearn does not support sklearn SVC; no SVM classifier C header was generated.')
 
 
 def train_svm(x_train, y_train, C_value=1.0, gamma_value=0.0):
@@ -87,6 +164,8 @@ def evaluate_model(model, x_test, y_test):
 
 def main(C_value=1.0, gamma_value=0.0):
     print('[START] SVM classifier execution started.')
+    from helpers import extract_neurokit_features
+
     model_path = Path("models/svm_classifier.joblib")
     model_path.parent.mkdir(parents=True, exist_ok=True)
     
