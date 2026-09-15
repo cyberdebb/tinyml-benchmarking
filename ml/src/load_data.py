@@ -1,6 +1,7 @@
 import wfdb
 import numpy as np
 from sklearn.model_selection import train_test_split
+import time
 from scipy.signal import butter, sosfilt
 
 # 1. Filtro Causal (Pronto para o Edge AI / ESP32)
@@ -80,16 +81,25 @@ def build_full_dataset(config):
     print(f"[CONFIG] Number of records: {len(records)}")
     
     for record_index, record_name in enumerate(records, start=1):
-        try:
-            print(f'[DATA] Processing record {record_index}/{len(records)}: {record_name}')
-            X_patient, y_patient = load_and_segment_record(record_name, config)
-            if len(X_patient) > 0:
-                all_X.append(X_patient)
-                all_y.append(y_patient)
-            else:
-                print(f'[DATA] Record {record_name} skipped because no valid beats were found.')
-        except Exception as e:
+        print(f'[DATA] Processing record {record_index}/{len(records)}: {record_name}')
+        
+        # Loop infinito que só é quebrado quando o download/processamento dá certo
+        while True:
+            try:
+                X_patient, y_patient = load_and_segment_record(record_name, config)
+                if len(X_patient) > 0:
+                    all_X.append(X_patient)
+                    all_y.append(y_patient)
+                else:
+                    print(f'[DATA] Record {record_name} skipped because no valid beats were found.')
+                
+                # Se chegou aqui sem dar erro, sai do while e vai para o próximo record
+                break 
+                
+            except Exception as e:
                 print(f'[ERROR] Failed to process record {record_name}: {e}')
+                print('[RETRY] Tentando novamente em 5 segundos...')
+                time.sleep(5)  # Espera 5 segundos antes de tentar de novo para não sobrecarregar o PhysioNet
             
     X_total = np.concatenate(all_X, axis=0).astype(np.float32)
     y_total = np.concatenate(all_y, axis=0).astype(np.float32)
