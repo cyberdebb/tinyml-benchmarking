@@ -128,7 +128,8 @@ int run_tflite(const float *beat)
         const int limit = std::min(count, kInputSamples);
         std::memcpy(input_tensor->data.f, beat, limit * sizeof(float));
     } else if (input_tensor->type == kTfLiteInt8) {
-        const int count = std::min(input_tensor->bytes, kInputSamples);
+        const int count = static_cast<int>(
+            std::min(input_tensor->bytes, static_cast<size_t>(kInputSamples)));
         for (int i = 0; i < count; ++i) {
             input_tensor->data.int8[i] = static_cast<int8_t>(
                 std::lround(beat[i] / input_tensor->params.scale) +
