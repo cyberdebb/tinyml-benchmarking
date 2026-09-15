@@ -14,7 +14,10 @@ from load_data import build_full_dataset, classes
 
 
 def _format_float(value):
-    return f'{float(value):.9g}f'
+    s = f'{float(value):.9g}'
+    if '.' not in s and 'e' not in s.lower():
+        s += '.0'
+    return s + 'f'
 
 
 def _write_rows(file, values):
