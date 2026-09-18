@@ -22,7 +22,7 @@ aami_mapping = {
     'A': 1, 'a': 1, 'J': 1, 'S': 1,
     'V': 2, 'E': 2,
     'F': 3,
-    'P': 4, '/': 4, 'f': 4, 'u': 4, 'Q': 4
+    '/': 4, 'f': 4, 'Q': 4,
 }
 
 # 3. Extração por paciente
@@ -98,7 +98,7 @@ def build_full_dataset(config):
                 
             except Exception as e:
                 print(f'[ERROR] Failed to process record {record_name}: {e}')
-                print('[RETRY] Tentando novamente em 5 segundos...')
+                print('[RETRY] Retrying in 5 seconds...')
                 time.sleep(5)  # Espera 5 segundos antes de tentar de novo para não sobrecarregar o PhysioNet
             
     X_total = np.concatenate(all_X, axis=0).astype(np.float32)
