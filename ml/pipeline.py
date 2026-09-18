@@ -28,54 +28,45 @@ HEADER_FILES = (
     'random_forest_model.h',
 )
 
-MAX_ATTEMPTS = 50
-RETRY_DELAY_SECONDS = 20
-MAX_RETRY_DELAY_SECONDS = 300
-
 
 # ---------------------------------------------------------------------------
 # Step 1: training
 # ---------------------------------------------------------------------------
 
 def run_classifier(classifier, environment):
-    """Runs a single classifier script, retrying with backoff on failure."""
+    """Runs a single classifier script.
+
+    No retries: the dataset is cached on disk before training starts, so a
+    failure here is a real error and running the same training again would
+    only waste time.
+    """
     classifier_path = CLASSIFIERS_DIRECTORY / classifier
-    delay = RETRY_DELAY_SECONDS
+    print(f'\n[RUN] Starting {classifier}...')
 
-    for attempt in range(1, MAX_ATTEMPTS + 1):
-        print(f'\n[RUN] Starting {classifier} (attempt {attempt}/{MAX_ATTEMPTS})...')
+    # -u keeps the child output unbuffered so it shows up in real time.
+    process = subprocess.Popen(
+        [sys.executable, '-u', str(classifier_path)],
+        cwd=PROJECT_DIRECTORY,
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding='utf-8',
+        errors='replace',
+    )
+    try:
+        for line in process.stdout:
+            print(line, end='')
+        returncode = process.wait()
+    except KeyboardInterrupt:
+        process.terminate()
+        raise
 
-        # -u keeps the child output unbuffered so it shows up in real time.
-        process = subprocess.Popen(
-            [sys.executable, '-u', str(classifier_path)],
-            cwd=PROJECT_DIRECTORY,
-            env=environment,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding='utf-8',
-            errors='replace',
-        )
-        try:
-            for line in process.stdout:
-                print(line, end='')
-            returncode = process.wait()
-        except KeyboardInterrupt:
-            process.terminate()
-            raise
+    if returncode == 0:
+        print(f'[DONE] {classifier} completed successfully.')
+        return True
 
-        if returncode == 0:
-            print(f'[DONE] {classifier} completed successfully.')
-            return True
-
-        print(f'[ERROR] {classifier} failed with exit code {returncode}.')
-
-        if attempt < MAX_ATTEMPTS:
-            print(f'[RETRY] Retrying {classifier} in {delay} seconds...')
-            time.sleep(delay)
-            delay = min(delay * 2, MAX_RETRY_DELAY_SECONDS)
-
-    print(f'[ERROR] {classifier} failed after {MAX_ATTEMPTS} attempts.')
+    print(f'[ERROR] {classifier} failed with exit code {returncode}.')
     return False
 
 
@@ -252,14 +243,14 @@ def main():
     # Comment or uncomment the steps you want to run!
 
     # Step 1: train the models. Accepts 'cnn', 'mlp', 'rf' and/or 'svm'
-    run_trainings(['cnn', 'mlp', 'rf', 'svm'])
+    run_trainings(['mlp', 'rf', 'svm'])
 
     # Step 2: copy the generated models into the firmware project.
     copy_model_files()
     # delete_model_files()
 
     # Step 3: build and flash one model. Only one fits on the board at a time.
-    build_and_upload_firmware('cnn')
+    # build_and_upload_firmware('cnn')
 
     # Optional: remove the copied models from the firmware project.
     # delete_model_files()
