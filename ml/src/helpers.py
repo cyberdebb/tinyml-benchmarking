@@ -54,7 +54,7 @@ def plot_confusion_matrix(y_true, y_pred, classes, feature,
                     ha="center", va="center",
                     color="white" if cm[i, j] > thresh else "black")
     fig.tight_layout()
-    output_directory = Path('resuls')
+    output_directory = Path('results')
     output_directory.mkdir(parents=True, exist_ok=True)
     fig.savefig('results/confusionMatrix-' + feature + '.eps', format='eps', dpi=1000)
     return ax
@@ -101,7 +101,7 @@ def PR_ROC_curves(ytrue, ypred, classes, ypred_mat):
         cax2.set_ylabel('Sensitivity')
         cax2.legend(loc=4)
 
-    output_directory = Path('resuls')
+    output_directory = Path('results')
     output_directory.mkdir(parents=True, exist_ok=True)
     plt.savefig("results/model_prec_recall_and_roc.eps",
         dpi=400,
@@ -117,7 +117,10 @@ def print_results(config, model, Xval, yval, classes):
 
     print("yval.shape", yval.shape)
 
-    ytrue = np.argmax(yval, axis=1)
+    yval = np.asarray(yval)
+    # yval holds one-hot rows for a categorical_crossentropy model, or plain
+    # class indices (1D) for a sparse_categorical_crossentropy model.
+    ytrue = np.argmax(yval, axis=1) if yval.ndim > 1 else yval.astype(int)
     yscore = np.array([ypred_mat[x][ytrue[x]] for x in range(len(yval))])
     ypred = np.argmax(ypred_mat, axis=1)
     
