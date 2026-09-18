@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import tensorflow as tf
 from keras import Sequential
 from keras.layers import Dense, Input
+from sklearn.exceptions import ConvergenceWarning
 from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, confusion_matrix,  accuracy_score,  precision_score,  recall_score,  f1_score,  roc_curve,  auc,  precision_recall_curve
@@ -16,6 +17,7 @@ from sklearn.preprocessing import label_binarize
 from sklearn.utils.class_weight import compute_class_weight
 import joblib
 import sys
+import warnings
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -76,7 +78,12 @@ def train_model_sklearn(x_train, y_train, x_validate, y_validate):
     early_stopping_patience = 10
 
     for epoch in range(max_epochs):
-        mlp_classifier.fit(balanced_x_train, balanced_y_train)
+        # max_iter=1 + warm_start=True intentionally run one iteration per
+        # epoch, so sklearn always warns that it hasn't converged yet; that
+        # warning is expected here, not a real problem.
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore', category=ConvergenceWarning)
+            mlp_classifier.fit(balanced_x_train, balanced_y_train)
         train_accuracy = accuracy_score(
             balanced_y_train,
             mlp_classifier.predict(balanced_x_train),
