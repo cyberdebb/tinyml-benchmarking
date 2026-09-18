@@ -32,31 +32,18 @@ MAX_ATTEMPTS = 50
 RETRY_DELAY_SECONDS = 20
 MAX_RETRY_DELAY_SECONDS = 300
 
-# Printed by build_full_dataset() in load_data.py, which every classifier calls.
-# Everything before it is network work (PhysioNet downloads), which is worth
-# retrying; everything after it runs offline, so a failure there is a real bug
-# and repeating a long training from scratch would only waste time.
-DATASET_READY_MARKER = '[DONE] Dataset loading completed.'
-
 
 # ---------------------------------------------------------------------------
 # Step 1: training
 # ---------------------------------------------------------------------------
 
-#TODO ta errado isso
 def run_classifier(classifier, environment):
-    """Runs a single classifier script.
-
-    Retries only while the failure happens before the dataset is ready
-    (temporary PhysioNet errors). Once training has started, the script is not
-    restarted.
-    """
+    """Runs a single classifier script, retrying with backoff on failure."""
     classifier_path = CLASSIFIERS_DIRECTORY / classifier
     delay = RETRY_DELAY_SECONDS
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
         print(f'\n[RUN] Starting {classifier} (attempt {attempt}/{MAX_ATTEMPTS})...')
-        dataset_ready = False
 
         # -u keeps the child output unbuffered so it shows up in real time.
         process = subprocess.Popen(
@@ -72,8 +59,6 @@ def run_classifier(classifier, environment):
         try:
             for line in process.stdout:
                 print(line, end='')
-                if DATASET_READY_MARKER in line:
-                    dataset_ready = True
             returncode = process.wait()
         except KeyboardInterrupt:
             process.terminate()
@@ -85,12 +70,8 @@ def run_classifier(classifier, environment):
 
         print(f'[ERROR] {classifier} failed with exit code {returncode}.')
 
-        if dataset_ready:
-            print(f'[SKIP] {classifier} failed after the dataset was loaded; not retrying.')
-            return False
-
         if attempt < MAX_ATTEMPTS:
-            print(f'[RETRY] Dataset stage failed. Retrying {classifier} in {delay} seconds...')
+            print(f'[RETRY] Retrying {classifier} in {delay} seconds...')
             time.sleep(delay)
             delay = min(delay * 2, MAX_RETRY_DELAY_SECONDS)
 
