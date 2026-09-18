@@ -1,150 +1,292 @@
-import subprocess
+import os
 import shutil
+import subprocess
 import sys
+import time
 from pathlib import Path
 
+PROJECT_DIRECTORY = Path(__file__).resolve().parent
+SRC_DIRECTORY = PROJECT_DIRECTORY / 'src'
+CLASSIFIERS_DIRECTORY = SRC_DIRECTORY / 'classifiers'
+MODELS_DIRECTORY = PROJECT_DIRECTORY / 'models'
+FIRMWARE_DIRECTORY = PROJECT_DIRECTORY.parent / 'esp32_firmware'
+FIRMWARE_SRC_DIRECTORY = FIRMWARE_DIRECTORY / 'src'
 
-def run_trainings():
-    """Step 1: Execute the all_trainings.py script."""
-    print("[PIPELINE] Step 1: Running all ML trainings...")
-    
-    # sys.executable ensures we use the same Python interpreter currently running
-    result = subprocess.run([sys.executable, "src/all_trainings.py"])
-    
-    if result.returncode != 0:
-        print("[ERROR] Training failed. Aborting pipeline.")
+# Maps each model name to its training script
+CLASSIFIER_SCRIPTS = {
+    'cnn': 'cnn_classifier.py',
+    'mlp': 'mlp_classifier.py',
+    'rf': 'random_forest_classifier.py',
+    'svm': 'svm_classifier.py',
+}
+
+TFLITE_FILES = ('cnn_classifier.tflite', 'mlp_classifier.tflite')
+HEADER_FILES = (
+    'svm_classifier.h',
+    'svm_classifier_scaler.h',
+    'random_forest_classifier.h',
+    'random_forest_model.h',
+)
+
+MAX_ATTEMPTS = 50
+RETRY_DELAY_SECONDS = 20
+MAX_RETRY_DELAY_SECONDS = 300
+
+# Printed by build_full_dataset() in load_data.py, which every classifier calls.
+# Everything before it is network work (PhysioNet downloads), which is worth
+# retrying; everything after it runs offline, so a failure there is a real bug
+# and repeating a long training from scratch would only waste time.
+DATASET_READY_MARKER = '[DONE] Dataset loading completed.'
+
+
+# ---------------------------------------------------------------------------
+# Step 1: training
+# ---------------------------------------------------------------------------
+
+#TODO ta errado isso
+def run_classifier(classifier, environment):
+    """Runs a single classifier script.
+
+    Retries only while the failure happens before the dataset is ready
+    (temporary PhysioNet errors). Once training has started, the script is not
+    restarted.
+    """
+    classifier_path = CLASSIFIERS_DIRECTORY / classifier
+    delay = RETRY_DELAY_SECONDS
+
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        print(f'\n[RUN] Starting {classifier} (attempt {attempt}/{MAX_ATTEMPTS})...')
+        dataset_ready = False
+
+        # -u keeps the child output unbuffered so it shows up in real time.
+        process = subprocess.Popen(
+            [sys.executable, '-u', str(classifier_path)],
+            cwd=PROJECT_DIRECTORY,
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding='utf-8',
+            errors='replace',
+        )
+        try:
+            for line in process.stdout:
+                print(line, end='')
+                if DATASET_READY_MARKER in line:
+                    dataset_ready = True
+            returncode = process.wait()
+        except KeyboardInterrupt:
+            process.terminate()
+            raise
+
+        if returncode == 0:
+            print(f'[DONE] {classifier} completed successfully.')
+            return True
+
+        print(f'[ERROR] {classifier} failed with exit code {returncode}.')
+
+        if dataset_ready:
+            print(f'[SKIP] {classifier} failed after the dataset was loaded; not retrying.')
+            return False
+
+        if attempt < MAX_ATTEMPTS:
+            print(f'[RETRY] Dataset stage failed. Retrying {classifier} in {delay} seconds...')
+            time.sleep(delay)
+            delay = min(delay * 2, MAX_RETRY_DELAY_SECONDS)
+
+    print(f'[ERROR] {classifier} failed after {MAX_ATTEMPTS} attempts.')
+    return False
+
+
+def run_trainings(models):
+    """Step 1: Train the given ML classifiers sequentially.
+
+    Args:
+        models: List of model names to train, in any order. Valid names are
+                'cnn', 'mlp', 'rf' and 'svm'. A single name may also be passed
+                as a plain string.
+    """
+    if isinstance(models, str):
+        models = [models]
+
+    # Normalize and drop duplicates while keeping the order the caller asked for.
+    requested = list(dict.fromkeys(model.strip().lower() for model in models))
+
+    if not requested:
+        print('[ERROR] No model given. Choose one or more of: '
+              f"{', '.join(CLASSIFIER_SCRIPTS)}.")
         sys.exit(1)
-        
-    print("[PIPELINE] Step 1 completed successfully.\n")
 
+    invalid = [model for model in requested if model not in CLASSIFIER_SCRIPTS]
+    if invalid:
+        print(f"[ERROR] Invalid model(s): {', '.join(invalid)}. "
+              f"Choose one or more of: {', '.join(CLASSIFIER_SCRIPTS)}.")
+        sys.exit(1)
+
+    classifiers = [CLASSIFIER_SCRIPTS[model] for model in requested]
+    print(f"[PIPELINE] Step 1: Running ML training for: {', '.join(requested)}")
+
+    environment = os.environ.copy()
+    environment['PYTHONPATH'] = str(SRC_DIRECTORY)
+
+    # Keep going even if one classifier fails, so the others still get trained.
+    failed_classifiers = [
+        classifier for classifier in classifiers
+        if not run_classifier(classifier, environment)
+    ]
+
+    if failed_classifiers:
+        print(f"[ERROR] Failed classifiers: {', '.join(failed_classifiers)}. Aborting pipeline.")
+        sys.exit(1)
+
+    print('[PIPELINE] Step 1 completed successfully.\n')
+
+
+# ---------------------------------------------------------------------------
+# Step 2: distribute the generated models
+# ---------------------------------------------------------------------------
 
 def copy_model_files():
     """Step 2: Distribute the generated models and headers to the ESP32 project."""
-    print("[PIPELINE] Step 2: Copying model files to ESP32 firmware folder...")
-    
-    # Define paths based on the current script's location
-    ml_dir = Path(__file__).resolve().parent
-    models_dir = ml_dir / "models"
-    firmware_dir = ml_dir.parent / "esp32_firmware"
-    firmware_src_dir = firmware_dir / "src"
+    print('[PIPELINE] Step 2: Copying model files to ESP32 firmware folder...')
 
-    if not models_dir.exists():
-        print(f"[ERROR] Models directory not found: {models_dir}")
+    if not MODELS_DIRECTORY.exists():
+        print(f'[ERROR] Models directory not found: {MODELS_DIRECTORY}')
         sys.exit(1)
-    if not firmware_dir.exists():
-        print(f"[ERROR] Firmware directory not found: {firmware_dir}")
+    if not FIRMWARE_DIRECTORY.exists():
+        print(f'[ERROR] Firmware directory not found: {FIRMWARE_DIRECTORY}')
         sys.exit(1)
 
-    # 2.1 Copy .tflite files to the firmware root (for platformio.ini embedding)
-    tflite_files = ["cnn_classifier.tflite", "mlp_classifier.tflite"]
-    for file_name in tflite_files:
-        src = models_dir / file_name
-        dst = firmware_dir / file_name
-        if src.exists():
-            shutil.copy(src, dst)
-            print(f"  -> Copied {file_name} to firmware root.")
+    FIRMWARE_SRC_DIRECTORY.mkdir(parents=True, exist_ok=True)
+
+    # 2.1 .tflite files go to the firmware root (embedded through CMakeLists.txt)
+    for file_name in TFLITE_FILES:
+        source = MODELS_DIRECTORY / file_name
+        if source.exists():
+            shutil.copy(source, FIRMWARE_DIRECTORY / file_name)
+            print(f'  -> Copied {file_name} to firmware root ({source.stat().st_size / 1024:.0f} KB).')
         else:
-            print(f"[WARNING] {file_name} not found in models directory.")
+            print(f'[WARNING] {file_name} not found in models directory.')
 
-    # 2.2 Copy C/C++ header files to the firmware src/ directory
-    header_files = [
-        "svm_classifier.h", 
-        "svm_classifier_scaler.h",
-        "random_forest_classifier.h",
-        "random_forest_model.h"
-    ]
-    for file_name in header_files:
-        src = models_dir / file_name
-        dst = firmware_src_dir / file_name
-        if src.exists():
-            shutil.copy(src, dst)
-            print(f"  -> Copied {file_name} to firmware src folder.")
+    # 2.2 C/C++ headers go to the firmware src/ directory
+    for file_name in HEADER_FILES:
+        source = MODELS_DIRECTORY / file_name
+        if source.exists():
+            shutil.copy(source, FIRMWARE_SRC_DIRECTORY / file_name)
+            print(f'  -> Copied {file_name} to firmware src folder.')
         else:
-            print(f"[WARNING] {file_name} not found in models directory.")
-            
-    print("[PIPELINE] Step 2 completed successfully.\n")
+            print(f'[WARNING] {file_name} not found in models directory.')
 
-
-def build_and_upload_firmware():
-    """Step 3: Call PlatformIO to build and flash the ESP32."""
-    print("[PIPELINE] Step 3: Building and uploading ESP32 firmware...")
-    
-    ml_dir = Path(__file__).resolve().parent
-    firmware_dir = ml_dir.parent / "esp32_firmware"
-
-    try:
-        # shell=True is highly recommended on Windows to properly resolve the 'pio' command
-        result = subprocess.run(
-            ["pio", "run", "-t", "upload"], 
-            cwd=firmware_dir,
-            shell=True 
-        )
-        if result.returncode != 0:
-            print("[ERROR] PlatformIO build/upload failed.")
-            sys.exit(1)
-    except FileNotFoundError:
-        print("[ERROR] 'pio' command not found. Ensure PlatformIO is installed and in your system PATH.")
-        sys.exit(1)
-        
-    print("[PIPELINE] Step 3 completed successfully.\n")
+    print('[PIPELINE] Step 2 completed successfully.\n')
 
 
 def delete_model_files():
     """Reverses copy_model_files by deleting the models and headers from the ESP32 project."""
-    print("[PIPELINE] Deleting model files from ESP32 firmware folder...")
-    
-    # Define paths based on the current script's location
-    ml_dir = Path(__file__).resolve().parent
-    firmware_dir = ml_dir.parent / "esp32_firmware"
-    firmware_src_dir = firmware_dir / "src"
+    print('[PIPELINE] Deleting model files from ESP32 firmware folder...')
 
-    if not firmware_dir.exists():
-        print(f"[WARNING] Firmware directory not found: {firmware_dir}")
+    if not FIRMWARE_DIRECTORY.exists():
+        print(f'[WARNING] Firmware directory not found: {FIRMWARE_DIRECTORY}')
         return
 
-    # 1. Delete .tflite files from the firmware root
-    tflite_files = ["cnn_classifier.tflite", "mlp_classifier.tflite"]
-    for file_name in tflite_files:
-        target_file = firmware_dir / file_name
-        if target_file.exists():
-            target_file.unlink() # Deletes the file
-            print(f"  -> Deleted {file_name} from firmware root.")
+    for file_name in TFLITE_FILES:
+        target = FIRMWARE_DIRECTORY / file_name
+        if target.exists():
+            target.unlink()
+            print(f'  -> Deleted {file_name} from firmware root.')
         else:
-            print(f"  -> [SKIP] {file_name} not found in firmware root.")
+            print(f'  -> [SKIP] {file_name} not found in firmware root.')
 
-    # 2. Delete C/C++ header files from the firmware src/ directory
-    header_files = [
-        "svm_classifier.h", 
-        "svm_classifier_scaler.h",
-        "random_forest_classifier.h",
-        "random_forest_model.h"
-    ]
-    for file_name in header_files:
-        target_file = firmware_src_dir / file_name
-        if target_file.exists():
-            target_file.unlink() # Deletes the file
-            print(f"  -> Deleted {file_name} from firmware src folder.")
+    for file_name in HEADER_FILES:
+        target = FIRMWARE_SRC_DIRECTORY / file_name
+        if target.exists():
+            target.unlink()
+            print(f'  -> Deleted {file_name} from firmware src folder.')
         else:
-            print(f"  -> [SKIP] {file_name} not found in firmware src folder.")
-            
-    print("[PIPELINE] Deletion completed successfully.\n")
-    
-    
+            print(f'  -> [SKIP] {file_name} not found in firmware src folder.')
+
+    print('[PIPELINE] Deletion completed successfully.\n')
+
+
+# ---------------------------------------------------------------------------
+# Step 3: firmware
+# ---------------------------------------------------------------------------
+
+def find_pio_executable():
+    """Returns the path to the PlatformIO CLI, or None if it cannot be found."""
+    pio = shutil.which('pio') or shutil.which('platformio')
+    if pio:
+        return pio
+
+    # Fallback: default PlatformIO install location (used by the VS Code extension)
+    scripts_dir = 'Scripts' if sys.platform == 'win32' else 'bin'
+    for name in ('pio', 'platformio'):
+        candidate = Path.home() / '.platformio' / 'penv' / scripts_dir / name
+        for path in (candidate, candidate.with_suffix('.exe')):
+            if path.exists():
+                return str(path)
+    return None
+
+
+def build_and_upload_firmware(model):
+    """Step 3: Build and flash the ESP32 firmware for a single model.
+
+    Args:
+        model: One of 'cnn', 'mlp', 'rf' or 'svm'. Must match an environment
+               name in esp32_firmware/platformio.ini. Only one model fits on
+               the board at a time.
+    """
+    model = model.lower()
+    if model not in CLASSIFIER_SCRIPTS:
+        print(f"[ERROR] Invalid model '{model}'. Choose one of: {', '.join(CLASSIFIER_SCRIPTS)}.")
+        sys.exit(1)
+
+    print(f"[PIPELINE] Step 3: Building and uploading ESP32 firmware for model '{model}'...")
+
+    pio = find_pio_executable()
+    if pio is None:
+        print("[ERROR] 'pio' command not found. Ensure PlatformIO is installed and in your system PATH.")
+        sys.exit(1)
+
+    result = subprocess.run(
+        [pio, 'run', '-e', model, '-t', 'upload'],
+        cwd=FIRMWARE_DIRECTORY,
+        check=False,
+    )
+    if result.returncode != 0:
+        print(f"[ERROR] PlatformIO build/upload failed for model '{model}'.")
+        sys.exit(1)
+
+    print(f"[PIPELINE] Step 3 completed successfully for model '{model}'.\n")
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
 def main():
-    print("==================================================")
-    print("         TinyML Automated Pipeline Start          ")
-    print("==================================================")
-    
-    # Uncomment these lines according to your needs!
-    
-    # run_trainings()
+    print('==================================================')
+    print('         TinyML Automated Pipeline Start          ')
+    print('==================================================')
+
+    # Comment or uncomment the steps you want to run!
+
+    # Step 1: train the models. Accepts 'cnn', 'mlp', 'rf' and/or 'svm'
+    run_trainings(['cnn', 'mlp', 'rf', 'svm'])
+
+    # Step 2: copy the generated models into the firmware project.
     copy_model_files()
     # delete_model_files()
-    # build_and_upload_firmware()
-    
-    print("==================================================")
-    print("        TinyML Automated Pipeline Finished!       ")
-    print("==================================================")
 
-if __name__ == "__main__":
+    # Step 3: build and flash one model. Only one fits on the board at a time.
+    build_and_upload_firmware('cnn')
+
+    # Optional: remove the copied models from the firmware project.
+    # delete_model_files()
+
+    print('==================================================')
+    print('        TinyML Automated Pipeline Finished!       ')
+    print('==================================================')
+
+
+if __name__ == '__main__':
     main()
