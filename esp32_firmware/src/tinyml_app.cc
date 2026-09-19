@@ -87,8 +87,7 @@ void filter_sos(float *signal)
 // ---------------------------------------------------------------------------
 #if TINYML_USE_TFLITE
 
-constexpr size_t kArenaSizePsram = 2 * 1024 * 1024;
-constexpr size_t kArenaSizeInternal = 128 * 1024;
+constexpr size_t kArenaSize = 128 * 1024;
 
 uint8_t *tensor_arena = nullptr;
 size_t arena_size = 0;
@@ -99,22 +98,15 @@ TfLiteTensor *output_tensor = nullptr;
 bool allocate_arena()
 {
     tensor_arena = static_cast<uint8_t *>(
-        heap_caps_malloc(kArenaSizePsram, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-    if (tensor_arena != nullptr) {
-        arena_size = kArenaSizePsram;
-        ESP_LOGI(TAG, "Tensor arena: %u bytes in PSRAM", static_cast<unsigned>(arena_size));
-        return true;
+        heap_caps_malloc(kArenaSize, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    if (tensor_arena == nullptr) {
+        ESP_LOGE(TAG, "Unable to allocate TFLite tensor arena");
+        return false;
     }
-    tensor_arena = static_cast<uint8_t *>(
-        heap_caps_malloc(kArenaSizeInternal, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
-    if (tensor_arena != nullptr) {
-        arena_size = kArenaSizeInternal;
-        ESP_LOGW(TAG, "No PSRAM, tensor arena: %u bytes in internal RAM",
-                 static_cast<unsigned>(arena_size));
-        return true;
-    }
-    ESP_LOGE(TAG, "Unable to allocate TFLite tensor arena");
-    return false;
+    arena_size = kArenaSize;
+    ESP_LOGI(TAG, "Tensor arena: %u bytes in internal RAM",
+             static_cast<unsigned>(arena_size));
+    return true;
 }
 
 bool init_model()
