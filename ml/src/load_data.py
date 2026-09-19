@@ -16,15 +16,23 @@ cache_directory = project_directory / 'data' / 'cache'
 record_list_cache = data_directory / 'RECORDS.json'
 
 # 1. Filtro Causal (Pronto para o Edge AI / ESP32)
-def realtime_bandpass_filter(data, lowcut=0.5, highcut=45.0, fs=360.0, order=4):
-    print(f'[FILTER] Applying band-pass filter to signal with {len(data)} samples...')
+#
+# Aplicado independentemente em cada janela de batimento (256 amostras), a
+# partir do estado zero, para reproduzir exatamente o que o firmware faz em
+# tinyml_app.cc (filter_sos): o ESP32 recebe o ECG cru e filtra cada janela
+# isoladamente, sem contexto do sinal continuo. Por isso o filtro NAO e
+# aplicado no sinal continuo do registro nem fica salvo no cache do dataset
+# -- ele so entra na hora de treinar/avaliar, para que treino e inferencia no
+# device vejam exatamente a mesma transformacao.
+def filter_beats(beats, lowcut=0.5, highcut=45.0, fs=360.0, order=4):
+    print(f'[FILTER] Applying band-pass filter to {len(beats)} beat window(s)...')
     nyq = 0.5 * fs
     low = lowcut / nyq
     high = highcut / nyq
     sos = butter(order, [low, high], btype='band', output='sos')
-    filtered_data = sosfilt(sos, data)
+    filtered_beats = sosfilt(sos, beats, axis=-1)
     print('[FILTER] Band-pass filtering completed.')
-    return filtered_data
+    return filtered_beats
 
 # 2. Mapeamento AAMI 
 classes = ['N', 'S', 'V', 'F', 'Q']
@@ -90,34 +98,34 @@ def load_and_segment_record(record_name, config):
         return np.array([]), np.array([])
         
     raw_signal = record.p_signal[:, channel_idx]
-    clean_signal = realtime_bandpass_filter(raw_signal)
-    
+
     # Define o raio da janela com base no input_size (256 // 2 = 128)
     window_radius = config.input_size // 2
-    
+
     X, y = [], []
-    
+
     for i in range(len(annotation.sample)):
         peak_idx = annotation.sample[i]
         symbol = annotation.symbol[i]
-        
+
         if symbol in aami_mapping:
             # Garante que não vai estourar o limite do array
-            if peak_idx >= window_radius and peak_idx + window_radius <= len(clean_signal):
-                # O tamanho recortado será exatamente config.input_size
-                beat_window = clean_signal[peak_idx - window_radius : peak_idx + window_radius]
-                
-                beat_min = np.min(beat_window)
-                beat_max = np.max(beat_window)
-                
-                if beat_max - beat_min > 0:
-                    beat_normalized = (beat_window - beat_min) / (beat_max - beat_min)
-                    X.append(beat_normalized)
+            if peak_idx >= window_radius and peak_idx + window_radius <= len(raw_signal):
+                # O tamanho recortado será exatamente config.input_size. Cru:
+                # sem filtro e sem normalização -- é exatamente o que o
+                # firmware recebe por serial e filtra ele mesmo antes de
+                # inferir (ver esp32_firmware/src/tinyml_app.cc).
+                beat_window = raw_signal[peak_idx - window_radius : peak_idx + window_radius]
+
+                # Ainda descarta janelas degeneradas (linha reta / sensor
+                # travado), que não são um batimento válido de qualquer jeito.
+                if beat_window.max() - beat_window.min() > 0:
+                    X.append(beat_window)
                     y.append(aami_mapping[symbol])
-            
+
     X = np.asarray(X)
     y = np.asarray(y)
-    print(f'[RECORD] Record {record_name} completed: {len(X)} valid beats extracted.')
+    print(f'[RECORD] Record {record_name} completed: {len(X)} valid beats extracted (raw, unfiltered).')
     return X, y
 
 
@@ -134,7 +142,7 @@ def build_full_dataset(config):
 
     cache_path = _dataset_cache_path(config)
     if cache_path.exists():
-        print(f'[CACHE] Loading cached processed dataset from {cache_path}...')
+        print(f'[CACHE] Loading cached raw dataset from {cache_path}...')
         cached = np.load(cache_path)
         X_total, y_total = cached['X'], cached['y']
         print(f'[CACHE] Loaded cached dataset: X={X_total.shape}, y={y_total.shape}')
@@ -168,9 +176,14 @@ def build_full_dataset(config):
         y_total = np.concatenate(all_y, axis=0).astype(np.float32)
         print(f'[DATA] Complete dataset shape: X={X_total.shape}, y={y_total.shape}')
 
+        # Cache guarda o sinal CRU (sem filtro, sem normalização). É esse
+        # mesmo cache que o benchmark_serial.py usa para montar o conjunto de
+        # validação enviado ao ESP32 -- assim o dispositivo recebe o mesmo
+        # tipo de sinal que receberia em um deployment real (ECG cru de um
+        # ADC), e é ele mesmo quem filtra antes de inferir.
         cache_directory.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(cache_path, X=X_total, y=y_total)
-        print(f'[CACHE] Saved processed dataset to {cache_path}.')
+        print(f'[CACHE] Saved raw dataset to {cache_path}.')
 
     # 3. Usa a config para decidir se faz o split ou não
     if config.split:
@@ -178,10 +191,18 @@ def build_full_dataset(config):
         X, Xval, y, yval = train_test_split(X_total, y_total, test_size=0.2, random_state=42)
         print(f'[SPLIT] Training shapes: X={X.shape}, y={y.shape}')
         print(f'[SPLIT] Validation shapes: X={Xval.shape}, y={yval.shape}')
+
+        # O filtro só é aplicado aqui, sobre os splits em memória -- nunca é
+        # salvo de volta no cache. Reproduz exatamente o que o firmware faz
+        # com cada janela recebida por serial (ver filter_beats acima).
+        X = filter_beats(X)
+        Xval = filter_beats(Xval)
+
         print('[DONE] Dataset loading completed.')
         return (X, y, Xval, yval)
     else:
         print('[SPLIT] Dataset split disabled.')
+        X_total = filter_beats(X_total)
         print(f'[DATA] Returning complete dataset with shape: {X_total.shape}')
         print('[DONE] Dataset loading completed.')
         return X_total, y_total
