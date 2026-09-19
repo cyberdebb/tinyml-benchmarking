@@ -25,7 +25,6 @@ HEADER_FILES = (
     'svm_classifier.h',
     'svm_classifier_scaler.h',
     'random_forest_classifier.h',
-    'random_forest_model.h',
 )
 
 
@@ -243,7 +242,7 @@ def main():
     # Comment or uncomment the steps you want to run!
 
     # Step 1: train the models. Accepts 'cnn', 'mlp', 'rf' and/or 'svm'
-    run_trainings(['mlp', 'rf', 'svm'])
+    run_trainings(['cnn'])
 
     # Step 2: copy the generated models into the firmware project.
     copy_model_files()
