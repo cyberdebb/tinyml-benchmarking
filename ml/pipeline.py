@@ -151,7 +151,7 @@ def copy_model_files():
     print('[PIPELINE] Step 2 completed successfully.\n')
 
 
-def delete_model_files():
+def clean_model_files():
     """Reverses copy_model_files by deleting the models and headers from the ESP32 project."""
     print('[PIPELINE] Deleting model files from ESP32 firmware folder...')
 
@@ -176,6 +176,25 @@ def delete_model_files():
             print(f'  -> [SKIP] {file_name} not found in firmware src folder.')
 
     print('[PIPELINE] Deletion completed successfully.\n')
+
+
+def clean_directories():
+    """Deletes the logs, models, reports, and results directories and all their contents."""
+    print('[PIPELINE] Deleting ML output directories...')
+    
+    ml_dir = Path(__file__).resolve().parent
+    directories_to_delete = ['logs', 'models', 'reports', 'results']
+    
+    for dir_name in directories_to_delete:
+        target_dir = ml_dir / dir_name
+        
+        if target_dir.exists() and target_dir.is_dir():
+            shutil.rmtree(target_dir)
+            print(f'  -> Deleted directory and its contents: {dir_name}/')
+        else:
+            print(f'  -> [SKIP] Directory not found: {dir_name}/')
+
+    print('[PIPELINE] Directories deletion completed successfully.\n')
 
 
 # ---------------------------------------------------------------------------
@@ -242,17 +261,15 @@ def main():
     # Comment or uncomment the steps you want to run!
 
     # Step 1: train the models. Accepts 'cnn', 'mlp', 'rf' and/or 'svm'
-    run_trainings(['cnn'])
+    run_trainings(['cnn', 'mlp', 'rf', 'svm'])
 
     # Step 2: copy the generated models into the firmware project.
     copy_model_files()
-    # delete_model_files()
+    # clean_model_files()
+    # clean_directories()
 
     # Step 3: build and flash one model. Only one fits on the board at a time.
     # build_and_upload_firmware('cnn')
-
-    # Optional: remove the copied models from the firmware project.
-    # delete_model_files()
 
     print('==================================================')
     print('        TinyML Automated Pipeline Finished!       ')
