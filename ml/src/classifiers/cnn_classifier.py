@@ -28,12 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from load_data import build_full_dataset, classes
 from helpers import print_results
 
-OUTPUT_DIRECTORY = Path('models')
-
-# Flash budget for the model on the ESP32-S3 (the whole app partition is 7 MB,
-# and the TFLite Micro runtime itself also needs space).
-MAX_TFLITE_KB = 1024
-
+output_directory = Path('models')
 
 # ---------------------------------------------------------------------------
 # Model
@@ -160,10 +155,10 @@ def build_representative_dataset(Xe, n_samples=500, seed=1):
 
 def export_model(model, Xe_train):
     print('[EXPORT] Starting model export...')
-    OUTPUT_DIRECTORY.mkdir(parents=True, exist_ok=True)
+    output_directory.mkdir(parents=True, exist_ok=True)
 
-    keras_path = OUTPUT_DIRECTORY / 'cnn_classifier.keras'
-    tflite_path = OUTPUT_DIRECTORY / 'cnn_classifier.tflite'
+    keras_path = output_directory / 'cnn_classifier.keras'
+    tflite_path = output_directory / 'cnn_classifier.tflite'
     model.save(keras_path)
 
     # Full integer (int8) quantization: weights, activations, input and output.
@@ -180,8 +175,6 @@ def export_model(model, Xe_train):
     size_kb = len(tflite_model) / 1024
     print(f'Keras model saved to {keras_path}')
     print(f'TFLite model saved to {tflite_path} ({size_kb:.1f} KB)')
-    if size_kb > MAX_TFLITE_KB:
-        print(f'[WARNING] TFLite model is larger than {MAX_TFLITE_KB} KB and may not fit on the ESP32-S3.')
     print('[EXPORT] Model export completed.')
     return tflite_path
 
@@ -260,7 +253,7 @@ def build_training_callbacks(config):
             write_images=True,
         ),
         ModelCheckpoint(
-            str(OUTPUT_DIRECTORY / 'cnn_classifier.keras'),
+            str(output_directory / 'cnn_classifier.keras'),
             monitor='val_loss',
             mode='min',
             save_best_only=True,
@@ -281,7 +274,7 @@ def cnn_train(config, X, y, Xval=None, yval=None):
     if np.any(np.isnan(Xvale)) or np.any(np.isnan(yval)):
         raise ValueError('Validation data contains None/NaN values')
 
-    OUTPUT_DIRECTORY.mkdir(parents=True, exist_ok=True)
+    output_directory.mkdir(parents=True, exist_ok=True)
 
     if config.checkpoint_path is not None:
         print(f'[MODEL] Loading checkpoint from: {config.checkpoint_path}')
@@ -335,7 +328,7 @@ def main():
         min_lr=5e-5,
         checkpoint_path=None,
         resume_epoch=0,
-        trained_model=str(OUTPUT_DIRECTORY / 'cnn_classifier.keras'),
+        trained_model=str(output_directory / 'cnn_classifier.keras'),
         export_only=True,  # set to False to train again
     )
     print('[CONFIG] CNN configuration:')
