@@ -21,7 +21,7 @@ import numpy as np
 import serial
 from sklearn.model_selection import train_test_split
 
-dataset_directory = Path(__file__).resolve().parents[1] / 'ml'
+dataset_directory = Path(__file__).resolve().parents[2] / 'ml'
 cache_directory = dataset_directory / 'data' / 'cache'
 results_directory = dataset_directory / 'results'
 
@@ -111,9 +111,10 @@ def send_beat(connection, beat):
     raise TimeoutError('No RESULT line received from the firmware.')
 
 
-def print_summary(model, y_true, y_predicted, latencies_us, model_info):
+def print_summary(model, y_true, y_predicted, inference_us, filter_us, model_info):
     accuracy = np.mean(y_true == y_predicted)
-    latencies_ms = np.array(latencies_us) / 1000.0
+    inference_ms = np.array(inference_us) / 1000.0
+    filter_ms = np.array(filter_us) / 1000.0
 
     print('\n==================================================')
     print(f'  Model: {model}')
@@ -122,39 +123,22 @@ def print_summary(model, y_true, y_predicted, latencies_us, model_info):
         print(f"  Arena used: {model_info['arena_bytes'] / 1024:.1f} KB")
     print(f'  Beats: {len(y_true)}')
     print(f'  Accuracy: {accuracy:.4f}')
-    print(f'  Latency (ms): mean {latencies_ms.mean():.2f} | '
-          f'min {latencies_ms.min():.2f} | max {latencies_ms.max():.2f} | '
-          f'p95 {np.percentile(latencies_ms, 95):.2f}')
+    print(f'  Inference (ms): mean {inference_ms.mean():.2f} | '
+          f'min {inference_ms.min():.2f} | max {inference_ms.max():.2f} | '
+          f'p95 {np.percentile(inference_ms, 95):.2f}')
+    print(f'  SOS filter (ms): mean {filter_ms.mean():.2f}')
     print('==================================================')
 
-    print('\n  Per-class accuracy:')
-    for class_index, class_name in enumerate(class_names):
-        mask = y_true == class_index
-        if mask.any():
-            print(f'    {class_name}: {np.mean(y_predicted[mask] == class_index):.4f} '
-                  f'({mask.sum()} beats)')
 
-    print('\n  Confusion matrix (rows = true, columns = predicted):')
-    matrix = np.zeros((len(class_names), len(class_names)), dtype=int)
-    for true_label, predicted_label in zip(y_true, y_predicted):
-        if 0 <= predicted_label < len(class_names):
-            matrix[true_label, predicted_label] += 1
-    header = '        ' + ' '.join(f'{name:>6}' for name in class_names)
-    print(header)
-    for class_index, class_name in enumerate(class_names):
-        row = ' '.join(f'{value:>6}' for value in matrix[class_index])
-        print(f'    {class_name} | {row}')
-
-
-def save_results(model, y_true, y_predicted, latencies_us):
+def save_results(model, y_true, y_predicted, inference_us, filter_us):
     results_directory.mkdir(parents=True, exist_ok=True)
     output_file = results_directory / f'{model}_serial.csv'
     with open(output_file, 'w', newline='', encoding='utf-8') as handle:
         writer = csv.writer(handle)
-        writer.writerow(['beat_index', 'true_class', 'predicted_class', 'inference_us'])
-        for index, (true_label, predicted_label, elapsed_us) in enumerate(
-                zip(y_true, y_predicted, latencies_us)):
-            writer.writerow([index, true_label, predicted_label, elapsed_us])
+        writer.writerow(['beat_index', 'true_class', 'predicted_class',
+                         'inference_us', 'filter_us'])
+        for index, row in enumerate(zip(y_true, y_predicted, inference_us, filter_us)):
+            writer.writerow([index, *row])
     print(f'\n[DONE] Results saved to {output_file}')
 
 
@@ -172,7 +156,8 @@ def main():
     print(f'[DATA] Sending {len(X_selected)} beats to {arguments.port}')
 
     predictions = []
-    latencies_us = []
+    inference_us = []
+    filter_us = []
 
     with serial.Serial(arguments.port, arguments.baud, timeout=1) as connection:
         # Reset the board so the run always starts from a known state.
@@ -187,9 +172,10 @@ def main():
 
         start_time = time.time()
         for index, beat in enumerate(X_selected, start=1):
-            prediction, elapsed_us = send_beat(connection, beat)
+            prediction, inference, filtering = send_beat(connection, beat)
             predictions.append(prediction)
-            latencies_us.append(elapsed_us)
+            inference_us.append(inference)
+            filter_us.append(filtering)
             if index % 20 == 0 or index == len(X_selected):
                 print(f'  {index}/{len(X_selected)} beats sent...')
         total_time = time.time() - start_time
@@ -198,8 +184,8 @@ def main():
     print(f'\n[SERIAL] Finished in {total_time:.1f} s '
           f'({total_time / len(predictions) * 1000:.0f} ms per beat including transfer)')
 
-    print_summary(arguments.model, y_selected, predictions, latencies_us, model_info)
-    save_results(arguments.model, y_selected, predictions, latencies_us)
+    print_summary(arguments.model, y_selected, predictions, inference_us, filter_us, model_info)
+    save_results(arguments.model, y_selected, predictions, inference_us, filter_us)
 
 
 if __name__ == '__main__':
