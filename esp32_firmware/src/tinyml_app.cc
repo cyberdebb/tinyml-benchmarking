@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <esp_timer.h>
 
 #include "driver/uart.h"
 #include "driver/uart_vfs.h"
@@ -18,7 +19,7 @@
 #elif defined(TINYML_MODEL_RF) || defined(TINYML_MODEL_SVM)
 #define TINYML_USE_TFLITE 0
 #else
-#error "Nenhum modelo definido: use TINYML_MODEL_CNN, _MLP, _RF ou _SVM"
+#error "No model defined"
 #endif
 
 #if TINYML_USE_TFLITE
@@ -87,7 +88,7 @@ void filter_sos(float *signal)
 #if TINYML_USE_TFLITE
 
 constexpr size_t kArenaSizePsram = 2 * 1024 * 1024;
-constexpr size_t kArenaSizeInternal = 256 * 1024;
+constexpr size_t kArenaSizeInternal = 128 * 1024;
 
 uint8_t *tensor_arena = nullptr;
 size_t arena_size = 0;
@@ -222,6 +223,16 @@ int classify(const float *beat)
     return best;
 }
 
+void print_model_info()
+{
+    std::printf("INFO,%s,%u,%u\n", kModelName,
+                static_cast<unsigned>(model_end - model_start),
+                interpreter != nullptr
+                    ? static_cast<unsigned>(interpreter->arena_used_bytes())
+                    : 0u);
+    std::fflush(stdout);
+}
+
 // ---------------------------------------------------------------------------
 // Random Forest / SVM
 // ---------------------------------------------------------------------------
@@ -319,6 +330,13 @@ int classify(const float *beat)
 #endif
 }
 
+void print_model_info()
+{
+    // Classic models live in the binary itself: no runtime arena.
+    std::printf("INFO,%s,0,0\n", kModelName);
+    std::fflush(stdout);
+}
+
 #endif  // TINYML_USE_TFLITE
 
 // ---------------------------------------------------------------------------
@@ -364,8 +382,11 @@ extern "C" void tinyml_app_main(void)
         ESP_LOGE(TAG, "Model initialization failed");
         return;
     }
+
+    print_model_info();
     ESP_LOGI(TAG, "Ready. Send one 256-sample CSV beat per line.");
 
+    // static so the main task stack is not blown
     static char line[kLineSize];
     static float beat[kInputSamples];
 
@@ -377,8 +398,21 @@ extern "C" void tinyml_app_main(void)
             ESP_LOGW(TAG, "Expected 256 comma-separated samples");
             continue;
         }
+
+        // Measured on the device: preprocessing + inference only, with the
+        // serial transfer left out.
+        const int64_t filter_start_us = esp_timer_get_time();
         filter_sos(beat);
-        ESP_LOGI(TAG, "model=%s class=%d", kModelName, classify(beat));
+        const int64_t inference_start_us = esp_timer_get_time();
+        const int prediction = classify(beat);
+        const int64_t end_us = esp_timer_get_time();
+
+        const long long filter_us = inference_start_us - filter_start_us;
+        const long long inference_us = end_us - inference_start_us;
+
+        // Machine-readable result line for the host script.
+        std::printf("RESULT,%d,%lld,%lld\n", prediction, inference_us, filter_us);
+        std::fflush(stdout);
     }
 
     ESP_LOGE(TAG, "stdin closed, leaving tinyml_app_main");
