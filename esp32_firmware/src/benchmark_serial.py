@@ -38,7 +38,14 @@ class_names = ('N', 'S', 'V', 'F', 'Q')
 
 
 def load_validation_set():
-    """Loads the same validation split every classifier was evaluated on."""
+    """Loads the same validation split every classifier was evaluated on.
+
+    The cache holds the raw, unfiltered ECG windows (see ml/src/load_data.py):
+    the band-pass filter is applied only at training/evaluation time on the
+    host, never saved back to the cache. So the beats sent here over serial
+    are raw, matching what the firmware itself filters on-device
+    (tinyml_app.cc, filter_sos) before running inference.
+    """
     cache_file = cache_directory / f'dataset_{dataset_config.feature}_{dataset_config.input_size}.npz'
     if not cache_file.exists():
         print(f'[ERROR] Dataset cache not found: {cache_file}')
