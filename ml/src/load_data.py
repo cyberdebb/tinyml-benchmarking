@@ -10,11 +10,10 @@ from scipy.signal import butter, sosfilt
 # file's own location (not on the current working directory) so it resolves
 # the same way whether a classifier is run directly (e.g. from
 # src/classifiers/) or indirectly through pipeline.py.
-PROJECT_DIRECTORY = Path(__file__).resolve().parent.parent
-DATA_DIRECTORY = PROJECT_DIRECTORY / 'data' / 'mitdb'
-CACHE_DIRECTORY = PROJECT_DIRECTORY / 'data' / 'cache'
-RECORD_LIST_CACHE = DATA_DIRECTORY / 'RECORDS.json'
-
+project_directory = Path(__file__).resolve().parent.parent
+data_directory = project_directory / 'data' / 'mitdb'
+cache_directory = project_directory / 'data' / 'cache'
+record_list_cache = data_directory / 'RECORDS.json'
 
 # 1. Filtro Causal (Pronto para o Edge AI / ESP32)
 def realtime_bandpass_filter(data, lowcut=0.5, highcut=45.0, fs=360.0, order=4):
@@ -41,45 +40,45 @@ aami_mapping = {
 def get_mitdb_records():
     """Returns the list of MIT-BIH record names, caching it locally so it only
     has to be fetched from PhysioNet once."""
-    if RECORD_LIST_CACHE.exists():
-        print(f'[CACHE] Using local record list from {RECORD_LIST_CACHE}.')
-        return json.loads(RECORD_LIST_CACHE.read_text())
+    if record_list_cache.exists():
+        print(f'[CACHE] Using local record list from {record_list_cache}.')
+        return json.loads(record_list_cache.read_text())
 
     print('[DOWNLOAD] Fetching record list from PhysioNet...')
     records = wfdb.get_record_list('mitdb')
-    DATA_DIRECTORY.mkdir(parents=True, exist_ok=True)
-    RECORD_LIST_CACHE.write_text(json.dumps(records))
-    print(f'[CACHE] Saved record list to {RECORD_LIST_CACHE}.')
+    data_directory.mkdir(parents=True, exist_ok=True)
+    record_list_cache.write_text(json.dumps(records))
+    print(f'[CACHE] Saved record list to {record_list_cache}.')
     return records
 
 
 def ensure_record_local(record_name):
-    """Downloads a MIT-BIH record (signal + annotation) to DATA_DIRECTORY the
+    """Downloads a MIT-BIH record (signal + annotation) to data_directory the
     first time it is needed. Later calls, from this or any other classifier
     script, reuse the local copy instead of hitting PhysioNet again."""
-    header_path = DATA_DIRECTORY / f'{record_name}.hea'
-    annotation_path = DATA_DIRECTORY / f'{record_name}.atr'
+    header_path = data_directory / f'{record_name}.hea'
+    annotation_path = data_directory / f'{record_name}.atr'
 
     if header_path.exists() and annotation_path.exists():
         return
 
     print(f'[DOWNLOAD] Record {record_name} not found locally, downloading from PhysioNet...')
-    DATA_DIRECTORY.mkdir(parents=True, exist_ok=True)
+    data_directory.mkdir(parents=True, exist_ok=True)
     wfdb.dl_database(
         'mitdb',
-        dl_dir=str(DATA_DIRECTORY),
+        dl_dir=str(data_directory),
         records=[record_name],
         annotators=['atr'],
         keep_subdirs=False,
     )
-    print(f'[DOWNLOAD] Record {record_name} saved locally to {DATA_DIRECTORY}.')
+    print(f'[DOWNLOAD] Record {record_name} saved locally to {data_directory}.')
 
 
 # 3. Extração por paciente
 def load_and_segment_record(record_name, config):
     print(f'[RECORD] Loading record {record_name}...')
     ensure_record_local(record_name)
-    local_record_path = str(DATA_DIRECTORY / record_name)
+    local_record_path = str(data_directory / record_name)
     record = wfdb.rdrecord(local_record_path)
     annotation = wfdb.rdann(local_record_path, 'atr')
 
@@ -124,7 +123,7 @@ def load_and_segment_record(record_name, config):
 
 # 3.1 Cache local do dataset já processado (janelas extraídas de todos os registros)
 def _dataset_cache_path(config):
-    return CACHE_DIRECTORY / f'dataset_{config.feature}_{config.input_size}.npz'
+    return cache_directory / f'dataset_{config.feature}_{config.input_size}.npz'
 
 
 # 4. Função principal de carregamento
@@ -169,7 +168,7 @@ def build_full_dataset(config):
         y_total = np.concatenate(all_y, axis=0).astype(np.float32)
         print(f'[DATA] Complete dataset shape: X={X_total.shape}, y={y_total.shape}')
 
-        CACHE_DIRECTORY.mkdir(parents=True, exist_ok=True)
+        cache_directory.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(cache_path, X=X_total, y=y_total)
         print(f'[CACHE] Saved processed dataset to {cache_path}.')
 

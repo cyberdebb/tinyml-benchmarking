@@ -1,11 +1,11 @@
 #########################
-#  How to run:
+#  How to upload:
 #########################
 
-# pio run -e cnn
-# pio run -e mlf
-# pio run -e rf
-# pio run -e svm
+# pio run -e cnn -t upload
+# pio run -e mlf -t upload
+# pio run -e rf -t upload
+# pio run -e svm -t upload
 
 FILE(GLOB_RECURSE app_sources
     ${CMAKE_SOURCE_DIR}/src/*.c
