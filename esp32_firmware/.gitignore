@@ -11,7 +11,7 @@ test
 
 # Models
 cnn_classifier.tflite
+mlp_classifier.tflite
 random_forest_classifier.h
-random_forest_model.h
 svm_classifier.h
 svm_classifier_scaler.h
