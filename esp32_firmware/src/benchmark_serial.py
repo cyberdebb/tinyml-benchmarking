@@ -1,7 +1,7 @@
 """Sends ECG beats to the ESP32 over UART and collects the predictions.
 
 Usage:
-    python src/benchmark_serial.py COM3 cnn --beats 500
+    python src/benchmark_serial.py COM3 <model> --beats 500
 
 The firmware answers every beat with a line:
     RESULT,<predicted_class>,<inference_microseconds>
@@ -24,7 +24,8 @@ from sklearn.metrics import accuracy_score, recall_score, f1_score, fbeta_score,
 
 dataset_directory = Path(__file__).resolve().parents[2] / 'ml'
 cache_directory = dataset_directory / 'data' / 'cache'
-results_directory = dataset_directory / 'results'
+firmware_directory = Path(__file__).resolve().parents[1]
+results_directory = firmware_directory / 'results'
 
 # Must match the classifier configs and the pipeline dataset_config.
 dataset_config = SimpleNamespace(feature='MLII', input_size=256)
