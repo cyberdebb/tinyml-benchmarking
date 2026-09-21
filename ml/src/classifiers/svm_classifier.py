@@ -65,19 +65,45 @@ def export_classifier_header(model, output_directory):
             'static const float svm_intercept[SVM_PAIR_COUNT] = {'
             + ','.join(_format_float(value) for value in classifier.intercept_)
             + '};\n'
+            # One-vs-one decision function, following libsvm's actual
+            # svm_predict_values(): the kernel value between x and every
+            # support vector is computed once (kvalue[]), and each pairwise
+            # classifier (i, j) only sums the two class-specific slices of
+            # dual_coef_ -- dual_coef_[j-1] over class i's support vectors
+            # and dual_coef_[i] over class j's support vectors. Summing over
+            # every support vector with a single dual_coef row (as a naive
+            # reading of the arrays suggests) is both wrong (mixes in
+            # coefficients that do not apply to this pair) and far slower
+            # (SVM_PAIR_COUNT full passes over all support vectors instead
+            # of one).
+            # kvalue is static (not a local array) because
+            # SVM_SUPPORT_VECTOR_COUNT can be in the thousands -- a stack
+            # array that size would overflow the ESP32 task stack.
             'static inline int svm_predict(const float *features) {\n'
+            '    static float kvalue[SVM_SUPPORT_VECTOR_COUNT];\n'
+            '    for (int k = 0; k < SVM_SUPPORT_VECTOR_COUNT; ++k) {\n'
+            '        float distance = 0.0f;\n'
+            '        for (int f = 0; f < SVM_FEATURE_COUNT; ++f) {\n'
+            '            float delta = features[f] - svm_support_vectors[k][f];\n'
+            '            distance += delta * delta;\n'
+            '        }\n'
+            '        kvalue[k] = expf(-SVM_GAMMA * distance);\n'
+            '    }\n'
+            '\n'
             '    int votes[SVM_CLASS_COUNT] = {0};\n'
             '    int pair = 0;\n'
             '    for (int i = 0; i < SVM_CLASS_COUNT; ++i) {\n'
+            '        const int start_i = svm_support_start[i];\n'
+            '        const int count_i = svm_n_support[i];\n'
             '        for (int j = i + 1; j < SVM_CLASS_COUNT; ++j, ++pair) {\n'
+            '            const int start_j = svm_support_start[j];\n'
+            '            const int count_j = svm_n_support[j];\n'
             '            float sum = svm_intercept[pair];\n'
-            '            for (int k = 0; k < SVM_SUPPORT_VECTOR_COUNT; ++k) {\n'
-            '                float distance = 0.0f;\n'
-            '                for (int f = 0; f < SVM_FEATURE_COUNT; ++f) {\n'
-            '                    float delta = features[f] - svm_support_vectors[k][f];\n'
-            '                    distance += delta * delta;\n'
-            '                }\n'
-            '                sum += svm_dual_coef[j - 1][k] * expf(-SVM_GAMMA * distance);\n'
+            '            for (int k = 0; k < count_i; ++k) {\n'
+            '                sum += svm_dual_coef[j - 1][start_i + k] * kvalue[start_i + k];\n'
+            '            }\n'
+            '            for (int k = 0; k < count_j; ++k) {\n'
+            '                sum += svm_dual_coef[i][start_j + k] * kvalue[start_j + k];\n'
             '            }\n'
             '            if (sum > 0.0f) ++votes[i]; else ++votes[j];\n'
             '        }\n'
