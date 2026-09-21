@@ -129,10 +129,7 @@ def evaluate_model(classifier, x_validate, y_validate, directory):
     - x_validate (numpy.ndarray): Validation features.
     - y_validate (numpy.ndarray): Validation labels.
     """
-
     print('[EVALUATION] Starting MLP validation...')
-    figures_directory = Path(directory) / 'reports' / 'figures'
-    figures_directory.mkdir(parents=True, exist_ok=True)
 
     # Make predictions on the validation set
     y_pred = classifier.predict(x_validate)
@@ -141,54 +138,7 @@ def evaluate_model(classifier, x_validate, y_validate, directory):
     accuracy = accuracy_score(y_validate, y_pred)
     print('\nTest Accuracy: {:.2f}%\n'.format(accuracy * 100))
 
-    # Confusion Matrix
-    cm = confusion_matrix(y_validate, y_pred)
-    print('Confusion Matrix:')
-    print(cm)
-
-    # Precision, Recall, F1 Score
-    precision = precision_score(y_validate, y_pred, average='weighted', zero_division=0)
-    recall = recall_score(y_validate, y_pred, average='weighted', zero_division=0)
-    f1 = f1_score(y_validate, y_pred, average='weighted', zero_division=0)
-
-    print('Precision: {:.2f}'.format(precision))
-    print('Recall: {:.2f}'.format(recall))
-    print('F1 Score: {:.2f}'.format(f1))
-    y_score = classifier.predict_proba(x_validate)
-    y_validate_binarized = label_binarize(y_validate, classes=classifier.classes_)
-
-    # Precision-Recall Curve for each class in the multiclass problem.
-    plt.figure()
-    for class_index, class_name in enumerate(classes):
-        class_precision, class_recall, _ = precision_recall_curve(
-            y_validate_binarized[:, class_index],
-            y_score[:, class_index],
-        )
-        plt.plot(class_recall, class_precision, lw=2, label=class_name)
-    plt.xlabel('Recall')
-    plt.ylabel('Precision')
-    plt.title('Precision-Recall Curve')
-    plt.legend(loc='best')
-    plt.savefig(figures_directory / 'precision_recall_curve.png')
-    plt.close()
-
-    # ROC Curve for each class in the multiclass problem.
-    plt.figure()
-    for class_index, class_name in enumerate(classes):
-        fpr, tpr, _ = roc_curve(
-            y_validate_binarized[:, class_index],
-            y_score[:, class_index],
-        )
-        roc_auc = auc(fpr, tpr)
-        plt.plot(fpr, tpr, lw=2, label=f'{class_name} (area = {roc_auc:.2f})')
-    plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
-    plt.xlabel('False Positive Rate')
-    plt.ylabel('True Positive Rate')
-    plt.title('Receiver Operating Characteristic Curve')
-    plt.legend(loc='lower right')
-    plt.savefig(figures_directory / 'roc_curve.png')
-    plt.close()
-    print('[EVALUATION] MLP validation completed.')
+    
 
 def test_model(classifier, x_test, y_test, directory):
     """
@@ -200,8 +150,6 @@ def test_model(classifier, x_test, y_test, directory):
     - y_test (numpy.ndarray): Test labels.
     """
     print("Testing Phase")
-    figures_directory = Path(directory) / 'reports' / 'figures'
-    figures_directory.mkdir(parents=True, exist_ok=True)
 
     # Make predictions on the test set
     y_pred = classifier.predict(x_test)
@@ -209,11 +157,6 @@ def test_model(classifier, x_test, y_test, directory):
     # Additional evaluation metrics
     print('\nClassification Report:')
     print(classification_report(y_test, y_pred))
-
-    # Confusion Matrix
-    cm = confusion_matrix(y_test, y_pred)
-    print('\nConfusion Matrix:')
-    print(cm)
 
     # Precision, Recall, F1 Score
     precision = precision_score(y_test, y_pred, average='weighted', zero_division=0)
@@ -223,41 +166,7 @@ def test_model(classifier, x_test, y_test, directory):
     print('\nPrecision: {:.2f}'.format(precision))
     print('Recall: {:.2f}'.format(recall))
     print('F1 Score: {:.2f}'.format(f1))
-
-    y_score = classifier.predict_proba(x_test)
-    y_test_binarized = label_binarize(y_test, classes=classifier.classes_)
-
-    # Precision-Recall Curve for each class in the multiclass problem.
-    plt.figure()
-    for class_index, class_name in enumerate(classes):
-        class_precision, class_recall, _ = precision_recall_curve(
-            y_test_binarized[:, class_index],
-            y_score[:, class_index],
-        )
-        plt.plot(class_recall, class_precision, lw=2, label=class_name)
-    plt.xlabel('Recall')
-    plt.ylabel('Precision')
-    plt.title('Precision-Recall Curve')
-    plt.legend(loc='best')
-    plt.savefig(figures_directory / 'test_precision_recall_curve.png')
-    plt.close()
-
-    # ROC Curve for each class in the multiclass problem.
-    plt.figure()
-    for class_index, class_name in enumerate(classes):
-        fpr, tpr, _ = roc_curve(
-            y_test_binarized[:, class_index],
-            y_score[:, class_index],
-        )
-        roc_auc = auc(fpr, tpr)
-        plt.plot(fpr, tpr, lw=2, label=f'{class_name} (area = {roc_auc:.2f})')
-    plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
-    plt.xlabel('False Positive Rate')
-    plt.ylabel('True Positive Rate')
-    plt.title('Receiver Operating Characteristic Curve')
-    plt.legend(loc='lower right')
-    plt.savefig(figures_directory / 'test_roc_curve.png')
-    plt.close()
+    
 
 def export_model(mlp_classifier):
     """

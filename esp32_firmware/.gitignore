@@ -15,3 +15,6 @@ mlp_classifier.tflite
 random_forest_classifier.h
 svm_classifier.h
 svm_classifier_scaler.h
+
+# Results
+results

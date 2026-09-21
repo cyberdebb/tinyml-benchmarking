@@ -178,12 +178,12 @@ def clean_model_files():
     print('[PIPELINE] Deletion completed successfully.\n')
 
 
-def clean_directories():
-    """Deletes the logs, models, reports directories and all their contents."""
+def clean_training_directories():
+    """Deletes the logs and models directories and all their contents."""
     print('[PIPELINE] Deleting ML output directories...')
     
     ml_dir = Path(__file__).resolve().parent
-    directories_to_delete = ['logs', 'models', 'reports']
+    directories_to_delete = ['logs', 'models']
     
     for dir_name in directories_to_delete:
         target_dir = ml_dir / dir_name
@@ -261,12 +261,12 @@ def main():
     # Comment or uncomment the steps you want to run!
 
     # Step 1: train the models. Accepts 'cnn', 'mlp', 'rf' and/or 'svm'
-    run_trainings(['cnn', 'mlp', 'rf', 'svm'])
+    # run_trainings(['cnn', 'mlp', 'rf', 'svm'])
 
     # Step 2: copy the generated models into the firmware project.
-    copy_model_files()
-    # clean_model_files()
-    # clean_directories()
+    # copy_model_files()
+    clean_model_files()
+    clean_training_directories()
 
     # Step 3: build and flash one model. Only one fits on the board at a time.
     # build_and_upload_firmware('cnn')
