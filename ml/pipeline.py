@@ -179,11 +179,11 @@ def clean_model_files():
 
 
 def clean_directories():
-    """Deletes the logs, models, reports, and results directories and all their contents."""
+    """Deletes the logs, models, reports directories and all their contents."""
     print('[PIPELINE] Deleting ML output directories...')
     
     ml_dir = Path(__file__).resolve().parent
-    directories_to_delete = ['logs', 'models', 'reports', 'results']
+    directories_to_delete = ['logs', 'models', 'reports']
     
     for dir_name in directories_to_delete:
         target_dir = ml_dir / dir_name
