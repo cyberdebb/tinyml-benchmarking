@@ -108,25 +108,25 @@ def beat_features(processed_signal, beat_time):
 
 
 def extract_neurokit_features(signals, labels):
-    import neurokit2 as nk
-
     sampling_rate = 150
     feature_rows = []
     total_signals = len(signals)
 
-    print(f'[FEATURES] Starting NeuroKit2 extraction for {total_signals} signals...')
+    print(f'[FEATURES] Starting feature extraction for {total_signals} signals...')
 
     for signal_index, signal in enumerate(signals, start=1):
         if signal_index == 1 or signal_index % 100 == 0 or signal_index == total_signals:
             print(f'[FEATURES] Processing signal {signal_index}/{total_signals}...')
         signal = np.asarray(signal, dtype=np.float32)
-        try:
-            cleaned_signal = nk.ecg_clean(signal, sampling_rate=sampling_rate)
-        except (ValueError, RuntimeError):
-            cleaned_signal = signal
 
-        processed_signal = pd.DataFrame({'ECG_Clean': cleaned_signal})
-        
+        # `signals` is already the same causal SOS band-pass filtered beat
+        # the firmware computes on-device (filter_beats() in load_data.py,
+        # filter_sos() on the ESP32). No extra cleaning is applied here on
+        # top of that -- an extra step like NeuroKit's ecg_clean() would
+        # make beat_features() see something the firmware never produces,
+        # a train/inference mismatch the device can't reproduce.
+        processed_signal = pd.DataFrame({'ECG_Clean': signal})
+
         feature_rows.append(beat_features(processed_signal, len(signal) / (2 * sampling_rate)))
 
     features = np.asarray(feature_rows, dtype=np.float32)

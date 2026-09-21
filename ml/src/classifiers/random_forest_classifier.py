@@ -25,7 +25,30 @@ def export_model(forest_classifier):
     # small-magnitude ECG statistics (means, stds well under 1.0) that
     # collapses almost every threshold to -1/0/1/2, destroying the tree.
     c_model = emlearn.convert(forest_classifier, method="inline", dtype="float")
-    c_model.save(file=str(output_directory / "random_forest_classifier.h"), name="random_forest")
+    code = c_model.save(name="random_forest")
+
+    # method="inline" turns the forest into nested if/else code, not a data
+    # array, so there is no sizeof()-able "model" to report like the TFLite
+    # models' embedded .tflite blob or the SVM's parameter arrays -- and the
+    # generated C source's byte length is a bad stand-in (it counts every
+    # brace, indent and "return N;", wildly overstating the compiled size).
+    # Total decision-node count across the forest is a real, reproducible
+    # complexity measure; RANDOM_FOREST_BYTES_PER_NODE converts it into an
+    # estimated flash footprint (a compiled node is a float load + compare +
+    # branch, roughly that many bytes on a 32-bit target) -- an estimate,
+    # not a measurement, unlike the other models' reported sizes.
+    bytes_per_node = 8
+    node_count = sum(tree.tree_.node_count for tree in forest_classifier.estimators_)
+    model_bytes = node_count * bytes_per_node
+
+    header_path = output_directory / "random_forest_classifier.h"
+    with header_path.open('w', encoding='ascii', newline='\n') as file:
+        file.write(f'#define RANDOM_FOREST_NODE_COUNT {node_count}\n')
+        file.write(f'#define RANDOM_FOREST_MODEL_BYTES {model_bytes}  '
+                    f'/* estimated: node count * {bytes_per_node} bytes/node */\n')
+        file.write(code)
+    print(f'[EXPORT] Forest has {node_count} decision nodes '
+          f'(~{model_bytes / 1024:.1f} KB estimated).')
     print('[EXPORT] Saved Random Forest C header model.')
 
 def leave_one_record_out(sources):
