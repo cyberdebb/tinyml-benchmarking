@@ -20,7 +20,11 @@ def export_model(forest_classifier):
     output_directory = Path('models')
     output_directory.mkdir(parents=True, exist_ok=True)
 
-    c_model = emlearn.convert(forest_classifier, method="inline")
+    # dtype='float' avoids emlearn's default int16 quantization, which
+    # truncates each split threshold to int(value) with no scaling -- for
+    # small-magnitude ECG statistics (means, stds well under 1.0) that
+    # collapses almost every threshold to -1/0/1/2, destroying the tree.
+    c_model = emlearn.convert(forest_classifier, method="inline", dtype="float")
     c_model.save(file=str(output_directory / "random_forest_classifier.h"), name="random_forest")
     print('[EXPORT] Saved Random Forest C header model.')
 

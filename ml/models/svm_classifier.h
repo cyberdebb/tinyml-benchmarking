@@ -13197,18 +13197,30 @@ static const float svm_dual_coef[SVM_CLASS_COUNT - 1][SVM_SUPPORT_VECTOR_COUNT] 
 };
 static const float svm_intercept[SVM_PAIR_COUNT] = {0.953456952f,-0.333872454f,0.849373908f,0.601846595f,-1.17392099f,-0.252685586f,-0.404407597f,1.11834496f,0.687566935f,-0.241772184f};
 static inline int svm_predict(const float *features) {
+    static float kvalue[SVM_SUPPORT_VECTOR_COUNT];
+    for (int k = 0; k < SVM_SUPPORT_VECTOR_COUNT; ++k) {
+        float distance = 0.0f;
+        for (int f = 0; f < SVM_FEATURE_COUNT; ++f) {
+            float delta = features[f] - svm_support_vectors[k][f];
+            distance += delta * delta;
+        }
+        kvalue[k] = expf(-SVM_GAMMA * distance);
+    }
+
     int votes[SVM_CLASS_COUNT] = {0};
     int pair = 0;
     for (int i = 0; i < SVM_CLASS_COUNT; ++i) {
+        const int start_i = svm_support_start[i];
+        const int count_i = svm_n_support[i];
         for (int j = i + 1; j < SVM_CLASS_COUNT; ++j, ++pair) {
+            const int start_j = svm_support_start[j];
+            const int count_j = svm_n_support[j];
             float sum = svm_intercept[pair];
-            for (int k = 0; k < SVM_SUPPORT_VECTOR_COUNT; ++k) {
-                float distance = 0.0f;
-                for (int f = 0; f < SVM_FEATURE_COUNT; ++f) {
-                    float delta = features[f] - svm_support_vectors[k][f];
-                    distance += delta * delta;
-                }
-                sum += svm_dual_coef[j - 1][k] * expf(-SVM_GAMMA * distance);
+            for (int k = 0; k < count_i; ++k) {
+                sum += svm_dual_coef[j - 1][start_i + k] * kvalue[start_i + k];
+            }
+            for (int k = 0; k < count_j; ++k) {
+                sum += svm_dual_coef[i][start_j + k] * kvalue[start_j + k];
             }
             if (sum > 0.0f) ++votes[i]; else ++votes[j];
         }

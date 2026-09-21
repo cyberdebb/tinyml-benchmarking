@@ -122,12 +122,7 @@ int classify(const float *beat)
     float features[kFeatureCount];
     extract_features(beat, features);
 
-    int16_t quantized[kFeatureCount];
-    for (int i = 0; i < kFeatureCount; ++i) {
-        const long q = std::lround(features[i] * 1000.0f);
-        quantized[i] = static_cast<int16_t>(std::clamp(q, -32768L, 32767L));
-    }
-    return random_forest_predict(quantized, kFeatureCount);
+    return random_forest_predict(features, kFeatureCount);
 }
 
 void print_model_info()
