@@ -127,8 +127,13 @@ int classify(const float *beat)
 
 void print_model_info()
 {
-    // Classic models live in the binary itself: no runtime arena.
-    std::printf("INFO,%s,0,0\n", kModelName);
+    // Classic models live in the binary itself: no runtime arena. The
+    // trees are inlined if/else code, not a data table, so there is no
+    // blob to sizeof() like the other models have; RANDOM_FOREST_MODEL_BYTES
+    // (random_forest_classifier.h) is an estimate from the forest's total
+    // decision-node count, not a measurement of the compiled code size.
+    std::printf("INFO,%s,%u,0\n", kModelName,
+                static_cast<unsigned>(RANDOM_FOREST_MODEL_BYTES));
     std::fflush(stdout);
 }
 

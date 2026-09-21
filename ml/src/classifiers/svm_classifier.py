@@ -65,6 +65,11 @@ def export_classifier_header(model, output_directory):
             'static const float svm_intercept[SVM_PAIR_COUNT] = {'
             + ','.join(_format_float(value) for value in classifier.intercept_)
             + '};\n'
+            # Actual flash footprint of the model's data, computed by the
+            # compiler from the arrays above -- so it stays correct even if
+            # their sizes change, unlike a value hardcoded at export time.
+            '#define SVM_MODEL_BYTES (sizeof(svm_n_support) + sizeof(svm_support_start) '
+            '+ sizeof(svm_support_vectors) + sizeof(svm_dual_coef) + sizeof(svm_intercept))\n'
             # One-vs-one decision function, following libsvm's actual
             # svm_predict_values(): the kernel value between x and every
             # support vector is computed once (kvalue[]), and each pairwise

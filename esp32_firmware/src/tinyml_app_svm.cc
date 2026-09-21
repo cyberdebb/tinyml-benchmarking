@@ -132,8 +132,11 @@ int classify(const float *beat)
 
 void print_model_info()
 {
-    // Classic models live in the binary itself: no runtime arena.
-    std::printf("INFO,%s,0,0\n", kModelName);
+    // Classic models live in the binary itself: no runtime arena. Model
+    // size is SVM_MODEL_BYTES (svm_classifier.h): the actual flash
+    // footprint of the support vectors/coefficients/intercepts arrays.
+    std::printf("INFO,%s,%u,0\n", kModelName,
+                static_cast<unsigned>(SVM_MODEL_BYTES));
     std::fflush(stdout);
 }
 
