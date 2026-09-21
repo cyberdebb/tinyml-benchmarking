@@ -19,7 +19,7 @@ record_list_cache = data_directory / 'RECORDS.json'
 #
 # Aplicado independentemente em cada janela de batimento (256 amostras), a
 # partir do estado zero, para reproduzir exatamente o que o firmware faz em
-# tinyml_app.cc (filter_sos): o ESP32 recebe o ECG cru e filtra cada janela
+# tinyml_app_<modelo>.cc (filter_sos): o ESP32 recebe o ECG cru e filtra cada janela
 # isoladamente, sem contexto do sinal continuo. Por isso o filtro NAO e
 # aplicado no sinal continuo do registro nem fica salvo no cache do dataset
 # -- ele so entra na hora de treinar/avaliar, para que treino e inferencia no

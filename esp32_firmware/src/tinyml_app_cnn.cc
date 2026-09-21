@@ -223,7 +223,7 @@ void init_console()
 
 }
 
-void tinyml_app_main(void)
+extern "C" void tinyml_app_main(void)
 {
     init_console();
 
