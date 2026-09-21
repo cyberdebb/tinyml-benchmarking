@@ -20,6 +20,7 @@ from types import SimpleNamespace
 import numpy as np
 import serial
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, recall_score, f1_score, fbeta_score, confusion_matrix
 
 dataset_directory = Path(__file__).resolve().parents[2] / 'ml'
 cache_directory = dataset_directory / 'data' / 'cache'
@@ -119,9 +120,42 @@ def send_beat(connection, beat):
 
 
 def print_summary(model, y_true, y_predicted, inference_us, filter_us, model_info):
-    accuracy = np.mean(y_true == y_predicted)
     inference_ms = np.array(inference_us) / 1000.0
     filter_ms = np.array(filter_us) / 1000.0
+
+    # 1. Acurácia
+    accuracy = accuracy_score(y_true, y_predicted)
+
+    # Para problemas multiclasse, usamos 'macro' para fazer a média aritmética das métricas de todas as classes
+    avg_method = 'macro'
+
+    # 2. Sensibilidade (Recall)
+    sensitivity = recall_score(y_true, y_predicted, average=avg_method, zero_division=0)
+
+    # 3. F1-Score
+    f1 = f1_score(y_true, y_predicted, average=avg_method, zero_division=0)
+
+    # 4. F-beta Score (usando beta=2.0 como exemplo para dar mais peso à sensibilidade)
+    beta_val = 2.0
+    f_beta = fbeta_score(y_true, y_predicted, beta=beta_val, average=avg_method, zero_division=0)
+
+    # 5. Especificidade
+    # A especificidade em multiclasse precisa ser calculada manualmente extraindo os Verdadeiros Negativos (TN)
+    # e Falsos Positivos (FP) da Matriz de Confusão para cada classe.
+    cm = confusion_matrix(y_true, y_predicted)
+    specificities = []
+    for i in range(len(cm)):
+        tp = cm[i, i]
+        fn = np.sum(cm[i, :]) - tp
+        fp = np.sum(cm[:, i]) - tp
+        tn = np.sum(cm) - (tp + fp + fn)
+        
+        # Evita divisão por zero
+        spec = tn / (tn + fp) if (tn + fp) > 0 else 0.0
+        specificities.append(spec)
+    
+    # Média das especificidades de todas as classes
+    specificity = np.mean(specificities)
 
     print('\n==================================================')
     print(f'  Model: {model}')
@@ -129,7 +163,11 @@ def print_summary(model, y_true, y_predicted, inference_us, filter_us, model_inf
         print(f"  Model size: {model_info['model_bytes'] / 1024:.1f} KB")
         print(f"  Arena used: {model_info['arena_bytes'] / 1024:.1f} KB")
     print(f'  Beats: {len(y_true)}')
-    print(f'  Accuracy: {accuracy:.4f}')
+    print(f'  Accuracy:      {accuracy:.4f}')
+    print(f'  Sensitivity:   {sensitivity:.4f} (Macro Avg)')
+    print(f'  Specificity:   {specificity:.4f} (Macro Avg)')
+    print(f'  F1-Score:      {f1:.4f} (Macro Avg)')
+    print(f'  F-beta (b={beta_val}): {f_beta:.4f} (Macro Avg)')
     print(f'  Inference (ms): mean {inference_ms.mean():.2f} | '
           f'min {inference_ms.min():.2f} | max {inference_ms.max():.2f} | '
           f'p95 {np.percentile(inference_ms, 95):.2f}')
