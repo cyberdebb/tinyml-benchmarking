@@ -11,6 +11,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from load_data import build_full_dataset, classes
+from helpers import extract_neurokit_features
 
 
 def _format_float(value):
@@ -167,7 +168,6 @@ def evaluate_model(model, x_test, y_test):
 
 def main(C_value=1.0, gamma_value=0.0):
     print('[START] SVM classifier execution started.')
-    from helpers import extract_neurokit_features
 
     model_path = Path("models/svm_classifier.joblib")
     model_path.parent.mkdir(parents=True, exist_ok=True)
