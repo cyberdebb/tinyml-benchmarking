@@ -14,6 +14,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from load_data import build_full_dataset, classes
 from helpers import extract_neurokit_features
 
+# Size/accuracy tradeoff for the embedded target: RANDOM_FOREST_MODEL_BYTES
+# (random_forest_classifier.h) scales directly with the forest's total
+# decision-node count, which is driven by these three. The previous values
+# (40, 20, 2) produced ~150k nodes and an estimated ~1.36MB inlined model.
+# Fewer/shallower trees with larger leaves cut that a lot, but there's no
+# dataset here to measure the resulting accuracy -- re-run the on-device
+# benchmark after retraining with these values and compare against the
+# previous run before trusting them for a final result. Tune further from
+# here if that comparison isn't the tradeoff you want.
+RF_N_ESTIMATORS = 20       # was 40 -- roughly halves node count linearly
+RF_MAX_DEPTH = 12          # was 20 -- cuts node count per tree the most
+RF_MIN_SAMPLES_LEAF = 4    # was 2 -- fewer, larger leaves
+
 
 def export_model(forest_classifier):
     print('[EXPORT] Starting Random Forest export...')
@@ -94,9 +107,9 @@ def main():
 
     print("Training model...")
     forest_classifier = RandomForestClassifier(
-        n_estimators=40,
-        max_depth=20,
-        min_samples_leaf=2,
+        n_estimators=RF_N_ESTIMATORS,
+        max_depth=RF_MAX_DEPTH,
+        min_samples_leaf=RF_MIN_SAMPLES_LEAF,
         max_features='sqrt',
         class_weight='balanced',
         random_state=42,
