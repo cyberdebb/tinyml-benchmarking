@@ -5,12 +5,15 @@ import sys
 import time
 from pathlib import Path
 
+# Project diretories
 project_directory = Path(__file__).resolve().parent
 src_directory = project_directory / 'src'
 classifiers_directory = src_directory / 'classifiers'
 models_directory = project_directory / 'models'
-firmware_directory = project_directory.parent / 'esp32_firmware'
-firmware_src_directory = firmware_directory / 'src'
+
+# Firmware directories
+esp32_firmware_directory = project_directory.parent / 'esp32_firmware'
+stm32_firmware_directory = project_directory.parent / 'stm32_firmware'
 
 # Maps each model name to its training script
 classifier_scripts = {
@@ -117,9 +120,11 @@ def run_trainings(models):
 # Step 2: distribute the generated models
 # ---------------------------------------------------------------------------
 
-def copy_model_files():
-    """Step 2: Distribute the generated models and headers to the ESP32 project."""
-    print('[PIPELINE] Step 2: Copying model files to ESP32 firmware folder...')
+def copy_model_files(firmware_directory):
+    """Step 2: Distribute the generated models and headers to the MCU project."""
+    firmware_src_directory = firmware_directory / 'src'
+    
+    print('[PIPELINE] Step 2: Copying model files to MCU firmware folder...')
 
     if not models_directory.exists():
         print(f'[ERROR] Models directory not found: {models_directory}')
@@ -151,9 +156,11 @@ def copy_model_files():
     print('[PIPELINE] Step 2 completed successfully.\n')
 
 
-def clean_model_files():
-    """Reverses copy_model_files by deleting the models and headers from the ESP32 project."""
-    print('[PIPELINE] Deleting model files from ESP32 firmware folder...')
+def clean_model_files(firmware_directory):
+    """Reverses copy_model_files by deleting the models and headers from the MCU project."""
+    firmware_src_directory = firmware_directory / 'src'
+    
+    print('[PIPELINE] Deleting model files from MCU firmware folder...')
 
     if not firmware_directory.exists():
         print(f'[WARNING] Firmware directory not found: {firmware_directory}')
@@ -217,12 +224,12 @@ def find_pio_executable():
     return None
 
 
-def build_and_upload_firmware(model):
-    """Step 3: Build and flash the ESP32 firmware for a single model.
+def build_and_upload_firmware(model, firmware_directory):
+    """Step 3: Build and flash the MCU firmware for a single model.
 
     Args:
         model: One of 'cnn', 'mlp', 'rf' or 'svm'. Must match an environment
-               name in esp32_firmware/platformio.ini. Only one model fits on
+               name in <firmware>/platformio.ini. Only one model fits on
                the board at a time.
     """
     model = model.lower()
@@ -230,7 +237,7 @@ def build_and_upload_firmware(model):
         print(f"[ERROR] Invalid model '{model}'. Choose one of: {', '.join(classifier_scripts)}.")
         sys.exit(1)
 
-    print(f"[PIPELINE] Step 3: Building and uploading ESP32 firmware for model '{model}'...")
+    print(f"[PIPELINE] Step 3: Building and uploading MCU firmware for model '{model}'...")
 
     pio = find_pio_executable()
     if pio is None:
@@ -259,17 +266,20 @@ def main():
     print('==================================================')
 
     # Comment or uncomment the steps you want to run!
+    
+    # firmware_directory = esp32_firmware_directory
+    firmware_directory = stm32_firmware_directory
 
     # Step 1: train the models. Accepts 'cnn', 'mlp', 'rf' and/or 'svm'
-    run_trainings(['cnn', 'mlp', 'rf', 'svm'])
+    # run_trainings(['cnn', 'mlp', 'rf', 'svm'])
 
     # Step 2: copy the generated models into the firmware project.
-    copy_model_files()
-    # clean_model_files()
+    copy_model_files(firmware_directory)
+    # clean_model_files(firmware_directory)
     # clean_training_directories()
 
     # Step 3: build and flash one model. Only one fits on the board at a time.
-    # build_and_upload_firmware('cnn')
+    # build_and_upload_firmware('cnn', firmware_directory)
 
     print('==================================================')
     print('        TinyML Automated Pipeline Finished!       ')
