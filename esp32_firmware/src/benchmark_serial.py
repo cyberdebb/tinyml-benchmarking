@@ -157,6 +157,11 @@ def print_summary(model, y_true, y_predicted, inference_us, filter_us, model_inf
     
     # Média das especificidades de todas as classes
     specificity = np.mean(specificities)
+    
+    # 6. Vazão Computacional (Throughput)
+    # Convertendo o tempo médio de inferência para segundos e dividindo 1 por ele
+    mean_inference_sec = np.mean(inference_us) / 1_000_000.0
+    throughput = 1.0 / mean_inference_sec if mean_inference_sec > 0 else 0.0
 
     print('\n==================================================')
     print(f'  Model: {model}')
@@ -173,6 +178,7 @@ def print_summary(model, y_true, y_predicted, inference_us, filter_us, model_inf
           f'min {inference_ms.min():.2f} | max {inference_ms.max():.2f} | '
           f'p95 {np.percentile(inference_ms, 95):.2f}')
     print(f'  SOS filter (ms): mean {filter_ms.mean():.2f}')
+    print(f'  Throughput:    {throughput:.2f} inferences/second')
     print('==================================================')
 
 
