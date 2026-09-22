@@ -26,6 +26,25 @@ def _write_rows(file, values):
         file.write('  {' + ','.join(_format_float(value) for value in row) + '},\n')
 
 
+def _quantization_scale(values, target_max=30000):
+    """Largest power-of-friendly int scale that keeps `values * scale`
+    inside int16 range, computed from the actual data instead of a fixed
+    guess -- so it stays safe if a retrain shifts the value range (e.g. a
+    different C or class_weight changes how large dual_coef_ can get).
+    target_max (30000, not the full 32767) leaves headroom below the
+    int16 ceiling."""
+    largest = float(np.abs(values).max())
+    if largest == 0.0:
+        return 1
+    return max(1, int(target_max / largest))
+
+
+def _write_int16_rows(file, values, scale):
+    quantized = np.clip(np.round(np.asarray(values) * scale), -32768, 32767).astype(np.int16)
+    for row in quantized:
+        file.write('  {' + ','.join(str(int(value)) for value in row) + '},\n')
+
+
 def export_classifier_header(model, output_directory):
     classifier = model.named_steps['svc']
     support_vectors = classifier.support_vectors_
@@ -33,6 +52,16 @@ def export_classifier_header(model, output_directory):
     support_starts = np.concatenate(([0], np.cumsum(support_counts)[:-1]))
     class_count = len(classifier.classes_)
     pair_count = class_count * (class_count - 1) // 2
+
+    # Support vectors and dual coefficients are stored as int16 fixed-point
+    # (roughly halving their flash footprint vs float32) instead of
+    # emlearn-style truncation: the scale is derived from this model's own
+    # value range (see _quantization_scale), so no precision is thrown away
+    # to a scale picked for a different model. The intercept stays float --
+    # only 10 values, and its precision directly affects the final sum's
+    # sign near the decision boundary.
+    sv_scale = _quantization_scale(support_vectors)
+    dual_coef_scale = _quantization_scale(classifier.dual_coef_)
 
     classifier_header = output_directory / 'svm_classifier.h'
     with classifier_header.open('w', encoding='ascii', newline='\n') as file:
@@ -46,20 +75,22 @@ def export_classifier_header(model, output_directory):
             f'#define SVM_SUPPORT_VECTOR_COUNT {len(support_vectors)}\n'
             f'#define SVM_PAIR_COUNT {pair_count}\n'
             f'#define SVM_GAMMA {_format_float(classifier._gamma)}\n'
+            f'#define SVM_SV_SCALE {sv_scale}.0f\n'
+            f'#define SVM_DUAL_COEF_SCALE {dual_coef_scale}.0f\n'
             'static const int32_t svm_n_support[SVM_CLASS_COUNT] = {'
             + ','.join(str(int(value)) for value in support_counts)
             + '};\n'
             'static const int32_t svm_support_start[SVM_CLASS_COUNT] = {'
             + ','.join(str(int(value)) for value in support_starts)
             + '};\n'
-            'static const float svm_support_vectors[SVM_SUPPORT_VECTOR_COUNT][SVM_FEATURE_COUNT] = {\n'
+            'static const int16_t svm_support_vectors[SVM_SUPPORT_VECTOR_COUNT][SVM_FEATURE_COUNT] = {\n'
         )
-        _write_rows(file, support_vectors)
+        _write_int16_rows(file, support_vectors, sv_scale)
         file.write('};\n')
         file.write(
-            'static const float svm_dual_coef[SVM_CLASS_COUNT - 1][SVM_SUPPORT_VECTOR_COUNT] = {\n'
+            'static const int16_t svm_dual_coef[SVM_CLASS_COUNT - 1][SVM_SUPPORT_VECTOR_COUNT] = {\n'
         )
-        _write_rows(file, classifier.dual_coef_)
+        _write_int16_rows(file, classifier.dual_coef_, dual_coef_scale)
         file.write('};\n')
         file.write(
             'static const float svm_intercept[SVM_PAIR_COUNT] = {'
@@ -89,7 +120,7 @@ def export_classifier_header(model, output_directory):
             '    for (int k = 0; k < SVM_SUPPORT_VECTOR_COUNT; ++k) {\n'
             '        float distance = 0.0f;\n'
             '        for (int f = 0; f < SVM_FEATURE_COUNT; ++f) {\n'
-            '            float delta = features[f] - svm_support_vectors[k][f];\n'
+            '            float delta = features[f] - (float)svm_support_vectors[k][f] / SVM_SV_SCALE;\n'
             '            distance += delta * delta;\n'
             '        }\n'
             '        kvalue[k] = expf(-SVM_GAMMA * distance);\n'
@@ -105,10 +136,10 @@ def export_classifier_header(model, output_directory):
             '            const int count_j = svm_n_support[j];\n'
             '            float sum = svm_intercept[pair];\n'
             '            for (int k = 0; k < count_i; ++k) {\n'
-            '                sum += svm_dual_coef[j - 1][start_i + k] * kvalue[start_i + k];\n'
+            '                sum += ((float)svm_dual_coef[j - 1][start_i + k] / SVM_DUAL_COEF_SCALE) * kvalue[start_i + k];\n'
             '            }\n'
             '            for (int k = 0; k < count_j; ++k) {\n'
-            '                sum += svm_dual_coef[i][start_j + k] * kvalue[start_j + k];\n'
+            '                sum += ((float)svm_dual_coef[i][start_j + k] / SVM_DUAL_COEF_SCALE) * kvalue[start_j + k];\n'
             '            }\n'
             '            if (sum > 0.0f) ++votes[i]; else ++votes[j];\n'
             '        }\n'
@@ -121,7 +152,8 @@ def export_classifier_header(model, output_directory):
             '}\n'
             '#endif\n'
         )
-    print(f'[EXPORT] Saved SVM classifier C header to {classifier_header}.')
+    print(f'[EXPORT] Saved SVM classifier C header to {classifier_header} '
+          f'(sv_scale={sv_scale}, dual_coef_scale={dual_coef_scale}).')
 
 
 def export_model(model):

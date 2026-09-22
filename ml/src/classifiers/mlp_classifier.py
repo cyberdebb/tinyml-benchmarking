@@ -259,18 +259,30 @@ def test_model(classifier, x_test, y_test, directory):
     plt.savefig(figures_directory / 'test_roc_curve.png')
     plt.close()
 
-def export_model(mlp_classifier):
+def build_representative_dataset(Xe, n_samples=500, seed=1):
+    rng = np.random.default_rng(seed)
+    indices = rng.choice(len(Xe), size=min(n_samples, len(Xe)), replace=False)
+
+    def representative_dataset():
+        for index in indices:
+            yield [Xe[index:index + 1].astype(np.float32)]
+
+    return representative_dataset
+
+
+def export_model(mlp_classifier, x_train):
     """
     Export the trained model for serving predictions.
 
     Parameters:
     - mlp_classifier (MLPClassifier): Trained MLPClassifier model.
-    - save_path (str): Path to save the exported model.
+    - x_train (numpy.ndarray): Training features, used only to calibrate
+      the int8 quantization ranges (representative_dataset below).
     """
     print('[EXPORT] Starting MLP model export...')
     output_directory = Path('models')
     output_directory.mkdir(parents=True, exist_ok=True)
-    
+
     joblib.dump(mlp_classifier, output_directory / 'mlp_classifier.joblib')
 
     keras_model = Sequential([Input(shape=(mlp_classifier.n_features_in_,))])
@@ -283,9 +295,21 @@ def export_model(mlp_classifier):
     )
     keras_model.save(output_directory / 'mlp_classifier.keras')
 
+    # Full integer (int8) quantization, same approach as cnn_classifier.py's
+    # export_model(): weights, activations, input and output all int8,
+    # calibrated from the actual training features. Previously this just
+    # called converter.convert() with no optimizations at all, so MLP was
+    # the only one of the four models shipping fully uncompressed.
     converter = tf.lite.TFLiteConverter.from_keras_model(keras_model)
-    (output_directory / 'mlp_classifier.tflite').write_bytes(converter.convert())
-    print('[EXPORT] Saved MLP joblib, Keras, and TFLite models.')
+    converter.optimizations = [tf.lite.Optimize.DEFAULT]
+    converter.representative_dataset = build_representative_dataset(x_train)
+    converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
+    converter.inference_input_type = tf.int8
+    converter.inference_output_type = tf.int8
+    tflite_model = converter.convert()
+    (output_directory / 'mlp_classifier.tflite').write_bytes(tflite_model)
+    print(f'[EXPORT] Saved MLP joblib, Keras, and TFLite models '
+          f'({len(tflite_model) / 1024:.1f} KB quantized).')
 
 def main():
     print('[START] MLP classifier execution started.')
@@ -305,7 +329,7 @@ def main():
         y_validate,
     )
     evaluate_model(trained_mlp_model, x_validate, y_validate, directory)
-    export_model(trained_mlp_model)
+    export_model(trained_mlp_model, x_train)
     print('[DONE] MLP classifier execution finished.')
 
 if __name__ == "__main__":
