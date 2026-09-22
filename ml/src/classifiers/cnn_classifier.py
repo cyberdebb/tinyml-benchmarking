@@ -162,8 +162,7 @@ def export_model(model, Xe_train):
     tflite_path = output_directory / 'cnn_classifier.tflite'
     model.save(keras_path)
 
-    # Full integer (int8) quantization: weights, activations, input and output.
-    # The ESP32 firmware already quantizes the input and dequantizes the output.
+    # OPIMIZATIONS
     converter = tf.lite.TFLiteConverter.from_keras_model(model)
     converter.optimizations = [tf.lite.Optimize.DEFAULT]
     converter.representative_dataset = build_representative_dataset(Xe_train)
