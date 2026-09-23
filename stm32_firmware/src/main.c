@@ -1,3 +1,5 @@
+#include <stdio.h>
+
 #include "main.h"
 
 extern void tinyml_app_main(void);
@@ -12,6 +14,12 @@ int main(void) {
     SystemClock_Config();
     MX_GPIO_Init();
     MX_USART3_UART_Init();
+
+    // stdout is not a tty under nosys, so newlib would fully buffer it and
+    // printf output would only reach the UART on fflush. Flush on every '\n'.
+    static char stdout_buf[256];
+    setvbuf(stdout, stdout_buf, _IOLBF, sizeof(stdout_buf));
+
     tinyml_app_main();
     while (1) {}
 }

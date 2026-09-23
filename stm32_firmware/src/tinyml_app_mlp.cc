@@ -136,11 +136,11 @@ bool allocate_arena()
     tensor_arena = static_cast<uint8_t *>(malloc(kArenaSize));
 
     if (tensor_arena == nullptr) {
-        std::printf("[tinyml] Unable to allocate TFLite tensor arena");
+        std::printf("[tinyml] Unable to allocate TFLite tensor arena\n");
         return false;
     }
     arena_size = kArenaSize;
-    std::printf("[tinyml] Tensor arena: %u bytes in internal RAM",
+    std::printf("[tinyml] Tensor arena: %u bytes in internal RAM\n",
              static_cast<unsigned>(arena_size));
     return true;
 }
@@ -153,7 +153,7 @@ bool init_model()
 
     const tflite::Model *model = tflite::GetModel(model_start);
     if (model->version() != TFLITE_SCHEMA_VERSION) {
-        std::printf("[tinyml] Unsupported TFLite schema version: %lu",
+        std::printf("[tinyml] Unsupported TFLite schema version: %lu\n",
                  static_cast<unsigned long>(model->version()));
         return false;
     }
@@ -174,14 +174,14 @@ bool init_model()
         resolver.AddQuantize() != kTfLiteOk ||
         resolver.AddMean() != kTfLiteOk ||
         resolver.AddDequantize() != kTfLiteOk) {
-        std::printf("[tinyml] Unable to register TFLite operators");
+        std::printf("[tinyml] Unable to register TFLite operators\n");
         return false;
     }
 
     static tflite::MicroInterpreter static_interpreter(
         model, resolver, tensor_arena, arena_size);
     if (static_interpreter.AllocateTensors() != kTfLiteOk) {
-        std::printf("[tinyml] AllocateTensors failed");
+        std::printf("[tinyml] AllocateTensors failed\n");
         return false;
     }
 
@@ -189,7 +189,7 @@ bool init_model()
     input_tensor = interpreter->input(0);
     output_tensor = interpreter->output(0);
 
-    std::printf("[tinyml] Model size: %u bytes, arena used: %u / %u bytes",
+    std::printf("[tinyml] Model size: %u bytes, arena used: %u / %u bytes\n",
              static_cast<unsigned>(model_end - model_start),
              static_cast<unsigned>(interpreter->arena_used_bytes()),
              static_cast<unsigned>(arena_size));
@@ -199,7 +199,7 @@ bool init_model()
 int classify(const float *beat)
 {
     if (interpreter == nullptr) {
-        std::printf("[tinyml] TFLite model is not initialized");
+        std::printf("[tinyml] TFLite model is not initialized\n");
         return -1;
     }
 
@@ -220,12 +220,12 @@ int classify(const float *beat)
             input_tensor->data.int8[i] = static_cast<int8_t>(std::clamp(q, -128L, 127L));
         }
     } else {
-        std::printf("[tinyml] Unsupported TFLite input type: %d", input_tensor->type);
+        std::printf("[tinyml] Unsupported TFLite input type: %d\n", input_tensor->type);
         return -1;
     }
 
     if (interpreter->Invoke() != kTfLiteOk) {
-        std::printf("[tinyml] TFLite Invoke failed");
+        std::printf("[tinyml] TFLite Invoke failed\n");
         return -1;
     }
 
@@ -235,7 +235,7 @@ int classify(const float *beat)
     } else if (output_tensor->type == kTfLiteInt8) {
         classes = std::min(classes, static_cast<int>(output_tensor->bytes));
     } else {
-        std::printf("[tinyml] Unsupported TFLite output type: %d", output_tensor->type);
+        std::printf("[tinyml] Unsupported TFLite output type: %d\n", output_tensor->type);
         return -1;
     }
 
@@ -326,14 +326,14 @@ extern "C" void tinyml_app_main(void)
 {
     stm_timer_init();
 
-    std::printf("[tinyml] Model: %s", kModelName);
+    std::printf("[tinyml] Model: %s\n", kModelName);
     if (!init_model()) {
-        std::printf("[tinyml] Model initialization failed");
+        std::printf("[tinyml] Model initialization failed\n");
         return;
     }
 
     print_model_info();
-    std::printf("[tinyml] Ready. Send one 256-sample CSV beat per line.");
+    std::printf("[tinyml] Ready. Send one 256-sample CSV beat per line.\n");
 
     // static so the main task stack is not blown
     static char line[kLineSize];
@@ -344,7 +344,7 @@ extern "C" void tinyml_app_main(void)
             continue;
         }
         if (!parse_beat(line, beat)) {
-            std::printf("[tinyml] Expected 256 comma-separated samples");
+            std::printf("[tinyml] Expected 256 comma-separated samples\n");
             continue;
         }
 
@@ -364,5 +364,5 @@ extern "C" void tinyml_app_main(void)
         std::fflush(stdout);
     }
 
-    std::printf("[tinyml] stdin closed, leaving tinyml_app_main");
+    std::printf("[tinyml] stdin closed, leaving tinyml_app_main\n");
 }

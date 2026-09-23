@@ -205,14 +205,14 @@ extern "C" void tinyml_app_main(void)
 {
     stm_timer_init();
 
-    std::printf("[tinyml] Model: %s", kModelName);
+    std::printf("[tinyml] Model: %s\n", kModelName);
     if (!init_model()) {
-        std::printf("[tinyml] Model initialization failed");
+        std::printf("[tinyml] Model initialization failed\n");
         return;
     }
 
     print_model_info();
-    std::printf("[tinyml] Ready. Send one 256-sample CSV beat per line.");
+    std::printf("[tinyml] Ready. Send one 256-sample CSV beat per line.\n");
 
     // static so the main task stack is not blown
     static char line[kLineSize];
@@ -223,7 +223,7 @@ extern "C" void tinyml_app_main(void)
             continue;
         }
         if (!parse_beat(line, beat)) {
-            std::printf("[tinyml] Expected 256 comma-separated samples");
+            std::printf("[tinyml] Expected 256 comma-separated samples\n");
             continue;
         }
 
@@ -243,5 +243,5 @@ extern "C" void tinyml_app_main(void)
         std::fflush(stdout);
     }
 
-    std::printf("[tinyml] stdin closed, leaving tinyml_app_main");
+    std::printf("[tinyml] stdin closed, leaving tinyml_app_main\n");
 }

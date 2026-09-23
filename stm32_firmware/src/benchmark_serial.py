@@ -85,7 +85,7 @@ def wait_for_ready(connection, timeout=20):
         line = connection.readline().decode('utf-8', errors='replace').strip()
         if not line:
             continue
-        print(f'  [esp32] {line}')
+        print(f'  [stm32] {line}')
         if line.startswith('INFO,'):
             parts = line.split(',')
             model_info = {
@@ -115,7 +115,7 @@ def send_beat(connection, beat):
         if line.startswith('RESULT,'):
             _, prediction, inference_us, filter_us = line.split(',')
             return int(prediction), int(inference_us), int(filter_us)
-        print(f'  [esp32] {line}')
+        print(f'  [stm32] {line}')
     raise TimeoutError('No RESULT line received from the firmware.')
 
 
