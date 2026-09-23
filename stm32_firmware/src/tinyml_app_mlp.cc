@@ -4,9 +4,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include "core_cm7.h"
-#include "usart.h"
 #include <stdlib.h>
+
+#include "stm32f7xx_hal.h"
 
 // ---------------------------------------------------------------------------
 // Model imports
@@ -14,6 +14,10 @@
 #include "tensorflow/lite/micro/micro_interpreter.h"
 #include "tensorflow/lite/micro/micro_mutable_op_resolver.h"
 #include "tensorflow/lite/schema/schema_generated.h"
+
+#define DWT_LAR_UNLOCK_KEY 0xC5ACCE55
+
+extern UART_HandleTypeDef huart3;
 
 extern "C" int _write(int file, char *ptr, int len)
 {
@@ -285,15 +289,18 @@ bool is_blank(const char *line)
     return true;
 }
 
-CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
-DWT->CYCCNT = 0;
-DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+void stm_timer_init() 
+{
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+    DWT->LAR = DWT_LAR_UNLOCK_KEY;
+    DWT->CYCCNT = 0;
+    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+}
 
-int64_t stm_timer_get_time()
+int64_t stm_timer_get_time() 
 {
     uint32_t cycles = DWT->CYCCNT;
-    int64_t us = (int64_t)cycles * 1000000 / SystemCoreClock;
-    return us;
+    return ((int64_t)cycles * 1000000) / SystemCoreClock;
 }
 
 char *uart_read_line(UART_HandleTypeDef *huart, char *buffer, size_t buffer_size)
