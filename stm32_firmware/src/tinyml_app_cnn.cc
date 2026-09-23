@@ -15,6 +15,8 @@
 #include "tensorflow/lite/micro/micro_mutable_op_resolver.h"
 #include "tensorflow/lite/schema/schema_generated.h"
 
+#include "cnn_classifier.h"
+
 #define DWT_LAR_UNLOCK_KEY 0xC5ACCE55
 
 extern UART_HandleTypeDef huart3;
@@ -24,9 +26,6 @@ extern "C" int _write(int file, char *ptr, int len)
     HAL_UART_Transmit(&huart3, (uint8_t *)ptr, len, HAL_MAX_DELAY);
     return len;
 }
-
-extern const unsigned char model_start[] asm("_binary_cnn_classifier_tflite_start");
-extern const unsigned char model_end[] asm("_binary_cnn_classifier_tflite_end");
 
 namespace {
 
@@ -85,7 +84,7 @@ bool init_model()
         return false;
     }
 
-    const tflite::Model *model = tflite::GetModel(model_start);
+    const tflite::Model *model = tflite::GetModel(cnn_classifier_tflite);
     if (model->version() != TFLITE_SCHEMA_VERSION) {
         std::printf("[tinyml] Unsupported TFLite schema version: %lu\n",
                  static_cast<unsigned long>(model->version()));
@@ -124,7 +123,7 @@ bool init_model()
     output_tensor = interpreter->output(0);
 
     std::printf("[tinyml] Model size: %u bytes, arena used: %u / %u bytes\n",
-             static_cast<unsigned>(model_end - model_start),
+             static_cast<unsigned>(sizeof(cnn_classifier_tflite)),
              static_cast<unsigned>(interpreter->arena_used_bytes()),
              static_cast<unsigned>(arena_size));
     return true;
@@ -188,7 +187,7 @@ int classify(const float *beat)
 void print_model_info()
 {
     std::printf("INFO,%s,%u,%u\n", kModelName,
-                static_cast<unsigned>(model_end - model_start),
+                static_cast<unsigned>(sizeof(cnn_classifier_tflite)),
                 interpreter != nullptr
                     ? static_cast<unsigned>(interpreter->arena_used_bytes())
                     : 0u);

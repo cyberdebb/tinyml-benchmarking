@@ -10,8 +10,8 @@ managed_components
 test
 
 # Models
-cnn_classifier.tflite
-mlp_classifier.tflite
+cnn_classifier.h
+mlp_classifier.h
 random_forest_classifier.h
 svm_classifier.h
 svm_classifier_scaler.h
