@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include "core_cm7.h"
 #include <stdlib.h>
 
 #include "stm32f7xx_hal.h"
@@ -68,8 +67,8 @@ TfLiteTensor *output_tensor = nullptr;
 
 bool allocate_arena()
 {
-    tensor_arena = static_cast<uint8_t *>(
-        malloc(kArenaSize);
+    tensor_arena = static_cast<uint8_t *>(malloc(kArenaSize));
+    
     if (tensor_arena == nullptr) {
         std::printf("[tinyml] Unable to allocate TFLite tensor arena");
         return false;

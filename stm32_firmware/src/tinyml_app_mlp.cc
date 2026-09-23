@@ -133,8 +133,8 @@ TfLiteTensor *output_tensor = nullptr;
 
 bool allocate_arena()
 {
-    tensor_arena = static_cast<uint8_t *>(
-        malloc(kArenaSize);
+    tensor_arena = static_cast<uint8_t *>(malloc(kArenaSize));
+
     if (tensor_arena == nullptr) {
         std::printf("[tinyml] Unable to allocate TFLite tensor arena");
         return false;
