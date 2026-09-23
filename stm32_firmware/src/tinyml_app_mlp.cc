@@ -324,6 +324,8 @@ char *uart_read_line(UART_HandleTypeDef *huart, char *buffer, size_t buffer_size
 
 extern "C" void tinyml_app_main(void)
 {
+    stm_timer_init();
+
     std::printf("[tinyml] Model: %s", kModelName);
     if (!init_model()) {
         std::printf("[tinyml] Model initialization failed");
