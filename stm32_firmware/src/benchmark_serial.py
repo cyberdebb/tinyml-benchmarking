@@ -115,7 +115,6 @@ def send_beat(connection, beat):
         if line.startswith('RESULT,'):
             _, prediction, inference_us, filter_us = line.split(',')
             return int(prediction), int(inference_us), int(filter_us)
-        # Anything else is an ESP_LOG line; show it, it usually explains a problem.
         print(f'  [esp32] {line}')
     raise TimeoutError('No RESULT line received from the firmware.')
 

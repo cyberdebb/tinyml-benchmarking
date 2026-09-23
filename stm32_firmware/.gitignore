@@ -6,7 +6,6 @@
 .vscode/ipch
 
 # Not relevant folders
-managed_components
 test
 
 # Models

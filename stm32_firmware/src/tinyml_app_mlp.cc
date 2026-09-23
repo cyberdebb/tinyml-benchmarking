@@ -4,12 +4,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <esp_timer.h>
-
-#include "driver/uart.h"
-#include "driver/uart_vfs.h"
-#include "esp_heap_caps.h"
-#include "esp_log.h"
+#include "core_cm7.h"
+#include "usart.h"
+#include <stdlib.h>
 
 // ---------------------------------------------------------------------------
 // Model imports
@@ -18,12 +15,17 @@
 #include "tensorflow/lite/micro/micro_mutable_op_resolver.h"
 #include "tensorflow/lite/schema/schema_generated.h"
 
+extern "C" int _write(int file, char *ptr, int len)
+{
+    HAL_UART_Transmit(&huart3, (uint8_t *)ptr, len, HAL_MAX_DELAY);
+    return len;
+}
+
 extern const unsigned char model_start[] asm("_binary_mlp_classifier_tflite_start");
 extern const unsigned char model_end[] asm("_binary_mlp_classifier_tflite_end");
 
 namespace {
 
-constexpr char TAG[] = "tinyml";
 constexpr int kInputSamples = 256;
 constexpr int kClassCount = 5;
 constexpr int kLineSize = 4096;
@@ -128,13 +130,13 @@ TfLiteTensor *output_tensor = nullptr;
 bool allocate_arena()
 {
     tensor_arena = static_cast<uint8_t *>(
-        heap_caps_malloc(kArenaSize, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+        malloc(kArenaSize);
     if (tensor_arena == nullptr) {
-        ESP_LOGE(TAG, "Unable to allocate TFLite tensor arena");
+        std::printf("[tinyml] Unable to allocate TFLite tensor arena");
         return false;
     }
     arena_size = kArenaSize;
-    ESP_LOGI(TAG, "Tensor arena: %u bytes in internal RAM",
+    std::printf("[tinyml] Tensor arena: %u bytes in internal RAM",
              static_cast<unsigned>(arena_size));
     return true;
 }
@@ -147,7 +149,7 @@ bool init_model()
 
     const tflite::Model *model = tflite::GetModel(model_start);
     if (model->version() != TFLITE_SCHEMA_VERSION) {
-        ESP_LOGE(TAG, "Unsupported TFLite schema version: %lu",
+        std::printf("[tinyml] Unsupported TFLite schema version: %lu",
                  static_cast<unsigned long>(model->version()));
         return false;
     }
@@ -168,14 +170,14 @@ bool init_model()
         resolver.AddQuantize() != kTfLiteOk ||
         resolver.AddMean() != kTfLiteOk ||
         resolver.AddDequantize() != kTfLiteOk) {
-        ESP_LOGE(TAG, "Unable to register TFLite operators");
+        std::printf("[tinyml] Unable to register TFLite operators");
         return false;
     }
 
     static tflite::MicroInterpreter static_interpreter(
         model, resolver, tensor_arena, arena_size);
     if (static_interpreter.AllocateTensors() != kTfLiteOk) {
-        ESP_LOGE(TAG, "AllocateTensors failed");
+        std::printf("[tinyml] AllocateTensors failed");
         return false;
     }
 
@@ -183,7 +185,7 @@ bool init_model()
     input_tensor = interpreter->input(0);
     output_tensor = interpreter->output(0);
 
-    ESP_LOGI(TAG, "Model size: %u bytes, arena used: %u / %u bytes",
+    std::printf("[tinyml] Model size: %u bytes, arena used: %u / %u bytes",
              static_cast<unsigned>(model_end - model_start),
              static_cast<unsigned>(interpreter->arena_used_bytes()),
              static_cast<unsigned>(arena_size));
@@ -193,7 +195,7 @@ bool init_model()
 int classify(const float *beat)
 {
     if (interpreter == nullptr) {
-        ESP_LOGE(TAG, "TFLite model is not initialized");
+        std::printf("[tinyml] TFLite model is not initialized");
         return -1;
     }
 
@@ -214,12 +216,12 @@ int classify(const float *beat)
             input_tensor->data.int8[i] = static_cast<int8_t>(std::clamp(q, -128L, 127L));
         }
     } else {
-        ESP_LOGE(TAG, "Unsupported TFLite input type: %d", input_tensor->type);
+        std::printf("[tinyml] Unsupported TFLite input type: %d", input_tensor->type);
         return -1;
     }
 
     if (interpreter->Invoke() != kTfLiteOk) {
-        ESP_LOGE(TAG, "TFLite Invoke failed");
+        std::printf("[tinyml] TFLite Invoke failed");
         return -1;
     }
 
@@ -229,7 +231,7 @@ int classify(const float *beat)
     } else if (output_tensor->type == kTfLiteInt8) {
         classes = std::min(classes, static_cast<int>(output_tensor->bytes));
     } else {
-        ESP_LOGE(TAG, "Unsupported TFLite output type: %d", output_tensor->type);
+        std::printf("[tinyml] Unsupported TFLite output type: %d", output_tensor->type);
         return -1;
     }
 
@@ -283,48 +285,67 @@ bool is_blank(const char *line)
     return true;
 }
 
-void init_console()
+CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+DWT->CYCCNT = 0;
+DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+
+int64_t stm_timer_get_time()
 {
-    setvbuf(stdin, nullptr, _IONBF, 0);
-    uart_driver_install(UART_NUM_0, 2 * kLineSize, 0, 0, nullptr, 0);
-    uart_vfs_dev_use_driver(UART_NUM_0);
+    uint32_t cycles = DWT->CYCCNT;
+    int64_t us = (int64_t)cycles * 1000000 / SystemCoreClock;
+    return us;
+}
+
+char *uart_read_line(UART_HandleTypeDef *huart, char *buffer, size_t buffer_size)
+{
+    size_t index = 0;
+    while (index < buffer_size - 1) {
+        uint8_t byte;
+        if (HAL_UART_Receive(huart, &byte, 1, HAL_MAX_DELAY) != HAL_OK) {
+            return nullptr;
+        }
+        buffer[index++] = (char)byte;
+        if (byte == '\n') {
+            break;
+        }
+    }
+    buffer[index] = '\0';
+    return buffer;
 }
 
 }
 
 extern "C" void tinyml_app_main(void)
 {
-    init_console();
-
-    ESP_LOGI(TAG, "Model: %s", kModelName);
+    std::printf("[tinyml] Model: %s", kModelName);
     if (!init_model()) {
-        ESP_LOGE(TAG, "Model initialization failed");
+        std::printf("[tinyml] Model initialization failed");
         return;
     }
 
     print_model_info();
-    ESP_LOGI(TAG, "Ready. Send one 256-sample CSV beat per line.");
+    std::printf("[tinyml] Ready. Send one 256-sample CSV beat per line.");
 
     // static so the main task stack is not blown
     static char line[kLineSize];
     static float beat[kInputSamples];
 
-    while (std::fgets(line, sizeof(line), stdin) != nullptr) {
+    while (uart_read_line(&huart3, line, sizeof(line)) != nullptr) {
         if (is_blank(line)) {
             continue;
         }
         if (!parse_beat(line, beat)) {
-            ESP_LOGW(TAG, "Expected 256 comma-separated samples");
+            std::printf("[tinyml] Expected 256 comma-separated samples");
             continue;
         }
 
         // Measured on the device: preprocessing + inference only, with the
         // serial transfer left out.
-        const int64_t filter_start_us = esp_timer_get_time();
+        const int64_t filter_start_us = stm_timer_get_time();
         filter_sos(beat);
-        const int64_t inference_start_us = esp_timer_get_time();
+        const int64_t inference_start_us = stm_timer_get_time();
         const int prediction = classify(beat);
-        const int64_t end_us = esp_timer_get_time();
+        const int64_t end_us = stm_timer_get_time();
 
         const long long filter_us = inference_start_us - filter_start_us;
         const long long inference_us = end_us - inference_start_us;
@@ -334,5 +355,5 @@ extern "C" void tinyml_app_main(void)
         std::fflush(stdout);
     }
 
-    ESP_LOGE(TAG, "stdin closed, leaving tinyml_app_main");
+    std::printf("[tinyml] stdin closed, leaving tinyml_app_main");
 }

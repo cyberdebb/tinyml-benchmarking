@@ -4,21 +4,23 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <esp_timer.h>
-
-#include "driver/uart.h"
-#include "driver/uart_vfs.h"
-#include "esp_heap_caps.h"
-#include "esp_log.h"
+#include "core_cm7.h"
+#include "usart.h"
+#include <stdlib.h>
 
 // ---------------------------------------------------------------------------
 // Model imports
 // ---------------------------------------------------------------------------
 #include "random_forest_classifier.h"
 
+extern "C" int _write(int file, char *ptr, int len)
+{
+    HAL_UART_Transmit(&huart3, (uint8_t *)ptr, len, HAL_MAX_DELAY);
+    return len;
+}
+
 namespace {
 
-constexpr char TAG[] = "tinyml";
 constexpr int kInputSamples = 256;
 constexpr int kClassCount = 5;
 constexpr int kLineSize = 4096;
@@ -162,48 +164,67 @@ bool is_blank(const char *line)
     return true;
 }
 
-void init_console()
+CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+DWT->CYCCNT = 0;
+DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+
+int64_t stm_timer_get_time()
 {
-    setvbuf(stdin, nullptr, _IONBF, 0);
-    uart_driver_install(UART_NUM_0, 2 * kLineSize, 0, 0, nullptr, 0);
-    uart_vfs_dev_use_driver(UART_NUM_0);
+    uint32_t cycles = DWT->CYCCNT;
+    int64_t us = (int64_t)cycles * 1000000 / SystemCoreClock;
+    return us;
+}
+
+char *uart_read_line(UART_HandleTypeDef *huart, char *buffer, size_t buffer_size)
+{
+    size_t index = 0;
+    while (index < buffer_size - 1) {
+        uint8_t byte;
+        if (HAL_UART_Receive(huart, &byte, 1, HAL_MAX_DELAY) != HAL_OK) {
+            return nullptr;
+        }
+        buffer[index++] = (char)byte;
+        if (byte == '\n') {
+            break;
+        }
+    }
+    buffer[index] = '\0';
+    return buffer;
 }
 
 }
 
 extern "C" void tinyml_app_main(void)
 {
-    init_console();
-
-    ESP_LOGI(TAG, "Model: %s", kModelName);
+    std::printf("[tinyml] Model: %s", kModelName);
     if (!init_model()) {
-        ESP_LOGE(TAG, "Model initialization failed");
+        std::printf("[tinyml] Model initialization failed");
         return;
     }
 
     print_model_info();
-    ESP_LOGI(TAG, "Ready. Send one 256-sample CSV beat per line.");
+    std::printf("[tinyml] Ready. Send one 256-sample CSV beat per line.");
 
     // static so the main task stack is not blown
     static char line[kLineSize];
     static float beat[kInputSamples];
 
-    while (std::fgets(line, sizeof(line), stdin) != nullptr) {
+    while (uart_read_line(&huart3, line, sizeof(line)) != nullptr) {
         if (is_blank(line)) {
             continue;
         }
         if (!parse_beat(line, beat)) {
-            ESP_LOGW(TAG, "Expected 256 comma-separated samples");
+            std::printf("[tinyml] Expected 256 comma-separated samples");
             continue;
         }
 
         // Measured on the device: preprocessing + inference only, with the
         // serial transfer left out.
-        const int64_t filter_start_us = esp_timer_get_time();
+        const int64_t filter_start_us = stm_timer_get_time();
         filter_sos(beat);
-        const int64_t inference_start_us = esp_timer_get_time();
+        const int64_t inference_start_us = stm_timer_get_time();
         const int prediction = classify(beat);
-        const int64_t end_us = esp_timer_get_time();
+        const int64_t end_us = stm_timer_get_time();
 
         const long long filter_us = inference_start_us - filter_start_us;
         const long long inference_us = end_us - inference_start_us;
@@ -213,5 +234,5 @@ extern "C" void tinyml_app_main(void)
         std::fflush(stdout);
     }
 
-    ESP_LOGE(TAG, "stdin closed, leaving tinyml_app_main");
+    std::printf("[tinyml] stdin closed, leaving tinyml_app_main");
 }
