@@ -291,19 +291,17 @@ def main():
 
     # Comment or uncomment the steps you want to run!
     
-    # firmware_directory = esp32_firmware_directory
-    firmware_directory = stm32_firmware_directory
-
     # Step 1: train the models. Accepts 'cnn', 'mlp', 'rf' and/or 'svm'
-    # run_trainings(['cnn', 'mlp', 'rf', 'svm'])
+    run_trainings(['cnn', 'mlp', 'rf', 'svm'])
 
     # Step 2: copy the generated models into the firmware project.
-    copy_model_files(firmware_directory)
-    # clean_model_files(firmware_directory)
-    # clean_training_directories()
+    for firmware_directory in (esp32_firmware_directory, stm32_firmware_directory):
+        copy_model_files(firmware_directory)
+        # clean_model_files(firmware_directory)
+        # clean_training_directories()
 
     # Step 3: build and flash one model. Only one fits on the board at a time.
-    # build_and_upload_firmware('cnn', firmware_directory)
+    # build_and_upload_firmware('cnn', esp32_firmware_directory)
 
     print('==================================================')
     print('        TinyML Automated Pipeline Finished!       ')
