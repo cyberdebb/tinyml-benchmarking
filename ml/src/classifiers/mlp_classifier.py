@@ -13,7 +13,7 @@ from sklearn.exceptions import ConvergenceWarning
 from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, confusion_matrix,  accuracy_score,  precision_score,  recall_score,  f1_score,  roc_curve,  auc,  precision_recall_curve
-from sklearn.preprocessing import label_binarize
+from sklearn.preprocessing import StandardScaler, label_binarize
 from sklearn.utils.class_weight import compute_class_weight
 import joblib
 import sys
@@ -22,7 +22,7 @@ import warnings
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from load_data import build_full_dataset, classes
-from helpers import extract_neurokit_features
+from helpers import build_representative_dataset, evaluate_tflite, extract_neurokit_features
 
 
 def train_model_sklearn(x_train, y_train, x_validate, y_validate):
@@ -114,8 +114,9 @@ def train_model_sklearn(x_train, y_train, x_validate, y_validate):
             )
             break
 
-            mlp_classifier.coefs_ = best_coefs
-            mlp_classifier.intercepts_ = best_intercepts
+    # Keep the weights of the best validation epoch, not the last one.
+    mlp_classifier.coefs_ = best_coefs
+    mlp_classifier.intercepts_ = best_intercepts
     print('[TRAIN] MLP training completed.')
 
     return mlp_classifier
@@ -129,7 +130,7 @@ def evaluate_model(classifier, x_validate, y_validate, directory):
     - x_validate (numpy.ndarray): Validation features.
     - y_validate (numpy.ndarray): Validation labels.
     """
-    print('[EVALUATION] Starting MLP validation...')
+    print('[EVALUATION] Starting MLP evaluation...')
 
     # Make predictions on the validation set
     y_pred = classifier.predict(x_validate)
@@ -168,31 +169,43 @@ def test_model(classifier, x_test, y_test, directory):
     print('F1 Score: {:.2f}'.format(f1))
     
 
-def build_representative_dataset(Xe, n_samples=500, seed=1):
-    rng = np.random.default_rng(seed)
-    indices = rng.choice(len(Xe), size=min(n_samples, len(Xe)), replace=False)
+def export_scaler_header(scaler, output_directory):
+    """Writes the StandardScaler parameters for the firmware, which
+    standardizes the features the same way before quantizing them."""
+    scaler_header = output_directory / 'mlp_classifier_scaler.h'
+    mean_values = ', '.join(f'{value:.9g}f' for value in scaler.mean_)
+    scale_values = ', '.join(f'{value:.9g}f' for value in scaler.scale_)
+    scaler_header.write_text(
+        '#ifndef MLP_CLASSIFIER_SCALER_H\n'
+        '#define MLP_CLASSIFIER_SCALER_H\n\n'
+        f'#define MLP_FEATURE_COUNT {len(scaler.mean_)}\n'
+        f'static const float mlp_scaler_mean[MLP_FEATURE_COUNT] = {{{mean_values}}};\n'
+        f'static const float mlp_scaler_scale[MLP_FEATURE_COUNT] = {{{scale_values}}};\n\n'
+        '#endif\n',
+        encoding='ascii',
+    )
+    print(f'[EXPORT] Saved StandardScaler parameters to {scaler_header}.')
 
-    def representative_dataset():
-        for index in indices:
-            yield [Xe[index:index + 1].astype(np.float32)]
 
-    return representative_dataset
-
-
-def export_model(mlp_classifier, x_train):
+def export_model(mlp_classifier, scaler, x_train):
     """
     Export the trained model for serving predictions.
 
     Parameters:
     - mlp_classifier (MLPClassifier): Trained MLPClassifier model.
-    - x_train (numpy.ndarray): Training features, used only to calibrate
-      the int8 quantization ranges (representative_dataset below).
+    - scaler (StandardScaler): Feature scaler fitted on the training set.
+    - x_train (numpy.ndarray): Standardized training features, used only to
+      calibrate the int8 quantization ranges (representative_dataset below).
+
+    Returns the path of the .tflite model.
     """
     print('[EXPORT] Starting MLP model export...')
     output_directory = Path('models')
     output_directory.mkdir(parents=True, exist_ok=True)
 
-    joblib.dump(mlp_classifier, output_directory / 'mlp_classifier.joblib')
+    joblib.dump({'scaler': scaler, 'model': mlp_classifier},
+                output_directory / 'mlp_classifier.joblib')
+    export_scaler_header(scaler, output_directory)
 
     keras_model = Sequential([Input(shape=(mlp_classifier.n_features_in_,))])
     for layer_size in mlp_classifier.hidden_layer_sizes:
@@ -216,20 +229,33 @@ def export_model(mlp_classifier, x_train):
     converter.inference_input_type = tf.int8
     converter.inference_output_type = tf.int8
     tflite_model = converter.convert()
-    (output_directory / 'mlp_classifier.tflite').write_bytes(tflite_model)
+    tflite_path = output_directory / 'mlp_classifier.tflite'
+    tflite_path.write_bytes(tflite_model)
     print(f'[EXPORT] Saved MLP joblib, Keras, and TFLite models '
           f'({len(tflite_model) / 1024:.1f} KB quantized).')
+    return tflite_path
 
 def main():
     print('[START] MLP classifier execution started.')
     directory = ''
     config = SimpleNamespace(split=True, input_size=256, feature='MLII')
     print('[DATA] Loading ECG dataset...')
-    x_train, y_train, x_validate, y_validate = build_full_dataset(config)
+    x_train, y_train, x_validate, y_validate, x_test, y_test = build_full_dataset(config)
     print(f'[DATA] Training windows shape: {x_train.shape}')
     print(f'[DATA] Validation windows shape: {x_validate.shape}')
+    print(f'[DATA] Test windows shape: {x_test.shape}')
     x_train, y_train = extract_neurokit_features(x_train, y_train)
     x_validate, y_validate = extract_neurokit_features(x_validate, y_validate)
+    x_test, y_test = extract_neurokit_features(x_test, y_test)
+
+    # The 12 features have very different ranges, and the int8 input tensor
+    # quantizes all of them with a single scale: without standardizing,
+    # small-range features collapse to one or two int8 levels. The firmware
+    # applies the same scaler (mlp_classifier_scaler.h) before quantizing.
+    scaler = StandardScaler().fit(x_train)
+    x_train = scaler.transform(x_train).astype(np.float32)
+    x_validate = scaler.transform(x_validate).astype(np.float32)
+    x_test = scaler.transform(x_test).astype(np.float32)
 
     trained_mlp_model = train_model_sklearn(
         x_train,
@@ -237,8 +263,11 @@ def main():
         x_validate,
         y_validate,
     )
-    evaluate_model(trained_mlp_model, x_validate, y_validate, directory)
-    export_model(trained_mlp_model, x_train)
+    # Final metrics on the test set (DS2): patients never seen in training
+    # or in the early stopping done on the validation set.
+    evaluate_model(trained_mlp_model, x_test, y_test, directory)
+    tflite_path = export_model(trained_mlp_model, scaler, x_train)
+    evaluate_tflite(tflite_path, x_test, y_test)
     print('[DONE] MLP classifier execution finished.')
 
 if __name__ == "__main__":

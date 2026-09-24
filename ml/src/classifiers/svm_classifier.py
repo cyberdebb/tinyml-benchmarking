@@ -185,20 +185,16 @@ def train_svm(x_train, y_train, C_value=1.0, gamma_value=0.0):
     print(f'[TRAIN] Training features shape: {x_train.shape}')
     print(f'[TRAIN] Training labels shape: {y_train.shape}')
     gamma = "scale" if gamma_value == 0.0 else gamma_value
-    class_ids, class_counts = np.unique(y_train, return_counts=True)
-    maximum_count = np.max(class_counts)
-    class_weight = {
-        class_id: float(np.sqrt(maximum_count / count))
-        for class_id, count in zip(class_ids, class_counts)
-    }
-    print(f'[TRAIN] Smoothed class weights: {class_weight}')
+    # Same class imbalance treatment as the CNN and the RF ('balanced'
+    # weights, inversely proportional to class frequency); the MLP gets the
+    # equivalent by oversampling each class to the same size.
     model = make_pipeline(
         StandardScaler(),
         SVC(
             C=C_value,
             gamma=gamma,
             kernel="rbf",
-            class_weight=class_weight,
+            class_weight="balanced",
             decision_function_shape="ovo",
             probability=False,
             max_iter=10000,
@@ -242,7 +238,10 @@ def main(C_value=1.0, gamma_value=0.0):
     })()
     print(f'[CONFIG] C={C_value}, gamma={gamma_value}')
     print('[DATA] Loading ECG dataset...')
-    x_train, y_train, x_test, y_test = build_full_dataset(config)
+    # The validation set (patients held out of DS1) is only used by the
+    # models with early stopping (CNN, MLP); SVM trains on the same training
+    # patients and is evaluated on the same test patients (DS2).
+    x_train, y_train, _, _, x_test, y_test = build_full_dataset(config)
     print(f'[DATA] Training windows shape: {x_train.shape}')
     print(f'[DATA] Test windows shape: {x_test.shape}')
     x_train, y_train = extract_neurokit_features(x_train, y_train)

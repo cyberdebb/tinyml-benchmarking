@@ -20,6 +20,7 @@
 #include "tensorflow/lite/schema/schema_generated.h"
 
 #include "mlp_classifier.h"
+#include "mlp_classifier_scaler.h"
 
 namespace {
 
@@ -38,6 +39,14 @@ constexpr float kSos[4][6] = {
 
 void filter_sos(float *signal)
 {
+    // Subtract the window's starting level first, like filter_beats() in
+    // ml/src/load_data.py: the filter starts from zero state, and without
+    // this the window's DC offset turns into a transient across the window.
+    const float offset = signal[0];
+    for (int i = 0; i < kInputSamples; ++i) {
+        signal[i] -= offset;
+    }
+
     for (int section = 0; section < 4; ++section) {
         float state_1 = 0.0f;
         float state_2 = 0.0f;
@@ -52,7 +61,9 @@ void filter_sos(float *signal)
 }
 
 constexpr int kFeatureCount = 12;
-constexpr int kFeatureWindow = 90;
+// 0.6 s around the R peak at 360 Hz (P wave, QRS and most of the T wave).
+// Must match beat_features() in ml/src/helpers.py.
+constexpr int kFeatureWindow = 216;
 
 void extract_features(const float *signal, float *features)
 {
@@ -199,6 +210,12 @@ int classify(const float *beat)
 
     float features[kFeatureCount];
     extract_features(beat, features);
+
+    // Same StandardScaler as in training (mlp_classifier.py), applied
+    // before quantizing so every feature uses the int8 range.
+    for (int i = 0; i < kFeatureCount; ++i) {
+        features[i] = (features[i] - mlp_scaler_mean[i]) / mlp_scaler_scale[i];
+    }
 
     if (input_tensor->type == kTfLiteFloat32) {
         const int count = static_cast<int>(input_tensor->bytes / sizeof(float));

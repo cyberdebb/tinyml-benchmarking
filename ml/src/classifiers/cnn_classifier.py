@@ -26,7 +26,7 @@ from sklearn.utils.class_weight import compute_class_weight
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from load_data import build_full_dataset, classes
-from helpers import print_results
+from helpers import build_representative_dataset, evaluate_tflite, print_results
 
 
 output_directory = Path('models')
@@ -143,17 +143,6 @@ def cnn_model(config):
 # Export
 # ---------------------------------------------------------------------------
 
-def build_representative_dataset(Xe, n_samples=500, seed=1):
-    rng = np.random.default_rng(seed)
-    indices = rng.choice(len(Xe), size=min(n_samples, len(Xe)), replace=False)
-
-    def representative_dataset():
-        for index in indices:
-            yield [Xe[index:index + 1].astype(np.float32)]
-
-    return representative_dataset
-
-
 def export_model(model, Xe_train):
     print('[EXPORT] Starting model export...')
     output_directory.mkdir(parents=True, exist_ok=True)
@@ -179,54 +168,20 @@ def export_model(model, Xe_train):
     return tflite_path
 
 
-def evaluate_tflite(tflite_path, Xe, y):
-    """Runs the quantized model on the validation set to check the accuracy
-    after quantization (this is what actually runs on the ESP32)."""
-    print('[EVALUATION] Evaluating quantized TFLite model...')
-    interpreter = tf.lite.Interpreter(model_path=str(tflite_path))
-    interpreter.allocate_tensors()
-    input_details = interpreter.get_input_details()[0]
-    output_details = interpreter.get_output_details()[0]
-
-    input_scale, input_zero_point = input_details['quantization']
-    predictions = np.empty(len(Xe), dtype=np.int64)
-
-    for index in range(len(Xe)):
-        sample = Xe[index:index + 1].astype(np.float32)
-        if input_details['dtype'] == np.int8:
-            sample = np.clip(np.round(sample / input_scale + input_zero_point), -128, 127)
-            sample = sample.astype(np.int8)
-        interpreter.set_tensor(input_details['index'], sample)
-        interpreter.invoke()
-        predictions[index] = np.argmax(interpreter.get_tensor(output_details['index'])[0])
-
-    accuracy = np.mean(predictions == y)
-    print(f'[EVALUATION] TFLite int8 accuracy: {accuracy:.4f}')
-
-    ops = sorted({op['op_name'] for op in interpreter._get_ops_details()})
-    print(f'[EVALUATION] TFLite ops used (must be registered in the firmware): {ops}')
-    return accuracy
-
-
 # ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
 
-def prepare_training_data(config, X, y, Xval, yval):
-    print('[DATA] Preparing training and validation data...')
+def prepare_training_data(X, Xval, Xtest):
+    print('[DATA] Preparing training, validation and test data...')
     Xe = np.expand_dims(X, axis=2)
-    if not config.split:
-        from sklearn.model_selection import train_test_split
-
-        prepared_data = train_test_split(Xe, y, test_size=0.2, random_state=1)
-        print('[DATA] Split created from the training data.')
-        return prepared_data
-
     Xvale = np.expand_dims(Xval, axis=2)
-    print('Train shapes - Xe:', Xe.shape, 'y:', y.shape)
-    print('Validation shapes - Xvale:', Xvale.shape, 'yval:', yval.shape)
+    Xteste = np.expand_dims(Xtest, axis=2)
+    print('Train shape:', Xe.shape)
+    print('Validation shape:', Xvale.shape)
+    print('Test shape:', Xteste.shape)
     print('[DATA] Data preparation completed.')
-    return Xe, Xvale, y, yval
+    return Xe, Xvale, Xteste
 
 
 def build_training_callbacks(config):
@@ -262,12 +217,12 @@ def build_training_callbacks(config):
     ]
 
 
-def cnn_train(config, X, y, Xval=None, yval=None):
+def cnn_train(config, X, y, Xval, yval, Xtest, ytest):
     print('[TRAIN] Starting CNN training pipeline...')
     print('Initial shapes - X:', X.shape, 'y:', y.shape)
     print('Any NaN in initial X:', np.any(np.isnan(X)), 'y:', np.any(np.isnan(y)))
 
-    Xe, Xvale, y, yval = prepare_training_data(config, X, y, Xval, yval)
+    Xe, Xvale, Xteste = prepare_training_data(X, Xval, Xtest)
 
     if np.any(np.isnan(Xe)) or np.any(np.isnan(y)):
         raise ValueError('Input data contains None/NaN values')
@@ -275,6 +230,14 @@ def cnn_train(config, X, y, Xval=None, yval=None):
         raise ValueError('Validation data contains None/NaN values')
 
     output_directory.mkdir(parents=True, exist_ok=True)
+
+    if config.export_only:
+        # Skips training and re-exports the model already trained, e.g. to
+        # regenerate the .tflite after a converter change.
+        print(f'[MODEL] export_only: loading trained model from {config.trained_model}')
+        model = keras.models.load_model(config.trained_model)
+        export_and_evaluate(config, model, Xe, Xteste, ytest)
+        return
 
     if config.checkpoint_path is not None:
         print(f'[MODEL] Loading checkpoint from: {config.checkpoint_path}')
@@ -303,12 +266,18 @@ def cnn_train(config, X, y, Xval=None, yval=None):
     )
     print('[TRAIN] Training completed.')
 
+    export_and_evaluate(config, model, Xe, Xteste, ytest)
+
+
+def export_and_evaluate(config, model, Xe, Xteste, ytest):
+    # Final metrics on the test set (DS2): patients never seen in training
+    # or in the early stopping / model selection done on the validation set.
     tflite_path = export_model(model, Xe)
-    evaluate_tflite(tflite_path, Xvale, yval)
-    
-    print('[EVALUATION] Starting validation evaluation (Keras float model)...')
-    print_results(config, model, Xvale, yval, classes)
-    print('[EVALUATION] Validation evaluation completed.')
+    evaluate_tflite(tflite_path, Xteste, ytest)
+
+    print('[EVALUATION] Starting test evaluation (Keras float model)...')
+    print_results(config, model, Xteste, ytest, classes)
+    print('[EVALUATION] Test evaluation completed.')
 
 
 def main():
@@ -329,14 +298,14 @@ def main():
         checkpoint_path=None,
         resume_epoch=0,
         trained_model=str(output_directory / 'cnn_classifier.keras'),
-        export_only=True,  # set to False to train again
+        export_only=False,  # True: skip training and re-export trained_model
     )
     print('[CONFIG] CNN configuration:')
     print(vars(config))
     print('[DATA] Loading ECG dataset...')
-    X, y, Xval, yval = build_full_dataset(config)
+    X, y, Xval, yval, Xtest, ytest = build_full_dataset(config)
     print('[DATA] ECG dataset loaded successfully.')
-    cnn_train(config, X, y, Xval, yval)
+    cnn_train(config, X, y, Xval, yval, Xtest, ytest)
     print('[DONE] CNN classifier execution finished.')
 
 

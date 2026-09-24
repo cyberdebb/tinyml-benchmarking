@@ -1,7 +1,7 @@
 # Benchmarking of TinyML Models for Cardiac Arrhythmia Detection
 
 Dataset:
-https://physionet.org/content/afdb/1.0.0/
+https://physionet.org/content/mitdb/1.0.0/ (MIT-BIH Arrhythmia Database)
 
 Tutorials used:
 https://www.kaggle.com/code/prashant111/svm-classifier-tutorial

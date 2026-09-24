@@ -23,14 +23,17 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, recall_score, f1_score, fbeta_score, confusion_matrix
 
 dataset_directory = Path(__file__).resolve().parents[2] / 'ml'
-cache_directory = dataset_directory / 'data' / 'cache'
 firmware_directory = Path(__file__).resolve().parents[1]
 results_directory = firmware_directory / 'results'
 
+# The test split and the cache location come from the training code itself,
+# so the boards are always benchmarked on the same patients the models were
+# tested on.
+sys.path.insert(0, str(dataset_directory / 'src'))
+from load_data import TEST_RECORDS, dataset_cache_path, select_records  # noqa: E402
+
 # Must match the classifier configs and the pipeline dataset_config.
 dataset_config = SimpleNamespace(feature='MLII', input_size=256)
-split_random_state = 42
-split_test_size = 0.2
 
 baud_rate = 115200
 # One beat takes a few hundred ms to travel at 115200 baud, so the timeout has
@@ -39,8 +42,8 @@ read_timeout_seconds = 15
 class_names = ('N', 'S', 'V', 'F', 'Q')
 
 
-def load_validation_set():
-    """Loads the same validation split every classifier was evaluated on.
+def load_test_set():
+    """Loads the test split (DS2 patients) every classifier was evaluated on.
 
     The cache holds the raw, unfiltered ECG windows (see ml/src/load_data.py):
     the band-pass filter is applied only at training/evaluation time on the
@@ -48,33 +51,39 @@ def load_validation_set():
     are raw, matching what the firmware itself filters on-device
     (tinyml_app_<model>.cc, filter_sos) before running inference.
     """
-    cache_file = cache_directory / f'dataset_{dataset_config.feature}_{dataset_config.input_size}.npz'
+    cache_file = dataset_cache_path(dataset_config.feature, dataset_config.input_size)
     if not cache_file.exists():
         print(f'[ERROR] Dataset cache not found: {cache_file}')
-        print('[ERROR] Run the pipeline (step 0) first.')
+        print('[ERROR] Run the training (pipeline step 1) first.')
         sys.exit(1)
 
     with np.load(cache_file) as data:
+        if 'records' not in data.files:
+            print('[ERROR] Dataset cache has no record ids (old format).')
+            print('[ERROR] Run the training (pipeline step 1) again to rebuild it.')
+            sys.exit(1)
         X_total = data['X']
         y_total = data['y']
+        records = data['records']
 
-    _, Xval, _, yval = train_test_split(
-        X_total,
-        y_total,
-        test_size=split_test_size,
-        random_state=split_random_state,
-    )
-    print(f'[DATA] Validation set: {Xval.shape[0]} beats')
-    return Xval, yval.astype(int)
+    Xtest, ytest = select_records(X_total, y_total, records, TEST_RECORDS)
+    print(f'[DATA] Test set: {Xtest.shape[0]} beats')
+    return Xtest, ytest.astype(int)
 
 
-def select_beats(Xval, yval, n_beats, seed=1):
+def select_beats(Xtest, ytest, n_beats, seed=1):
     """Picks a random subset, keeping the class distribution of the full set."""
-    if n_beats >= len(Xval):
-        return Xval, yval
-    rng = np.random.default_rng(seed)
-    indices = rng.choice(len(Xval), size=n_beats, replace=False)
-    return Xval[indices], yval[indices]
+    if n_beats >= len(Xtest):
+        return Xtest, ytest
+    try:
+        Xselected, _, yselected, _ = train_test_split(
+            Xtest, ytest, train_size=n_beats, stratify=ytest, random_state=seed)
+    except ValueError:
+        # A class too rare to stratify (fewer than 2 beats): plain random subset.
+        rng = np.random.default_rng(seed)
+        indices = rng.choice(len(Xtest), size=n_beats, replace=False)
+        return Xtest[indices], ytest[indices]
+    return Xselected, yselected
 
 
 def wait_for_ready(connection, timeout=20):
@@ -142,7 +151,9 @@ def print_summary(model, y_true, y_predicted, inference_us, filter_us, model_inf
     # 5. Especificidade
     # A especificidade em multiclasse precisa ser calculada manualmente extraindo os Verdadeiros Negativos (TN)
     # e Falsos Positivos (FP) da Matriz de Confusão para cada classe.
-    cm = confusion_matrix(y_true, y_predicted)
+    # Fixed labels so the matrix is always 5x5, even when a rare class is
+    # missing from the beats sent.
+    cm = confusion_matrix(y_true, y_predicted, labels=np.arange(len(class_names)))
     specificities = []
     for i in range(len(cm)):
         tp = cm[i, i]
@@ -202,8 +213,8 @@ def main():
     parser.add_argument('--baud', type=int, default=baud_rate)
     arguments = parser.parse_args()
 
-    Xval, yval = load_validation_set()
-    X_selected, y_selected = select_beats(Xval, yval, arguments.beats)
+    Xtest, ytest = load_test_set()
+    X_selected, y_selected = select_beats(Xtest, ytest, arguments.beats)
     print(f'[DATA] Sending {len(X_selected)} beats to {arguments.port}')
 
     predictions = []
