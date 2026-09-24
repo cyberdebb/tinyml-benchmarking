@@ -218,7 +218,7 @@ def main():
         connection.rts = False
         time.sleep(0.5)
 
-        print('[SERIAL] Waiting for the firmware...')
+        print('[SERIAL] Waiting for the firmware. Press the RESET button...')
         model_info = wait_for_ready(connection)
 
         start_time = time.time()
