@@ -6,12 +6,21 @@ import matplotlib.pyplot as plt
 import numpy as np
 from load_data import RR_FEATURES, aami_mapping, classes, sampling_rate
 from keras import models
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 import sys
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from pathlib import Path
+
+
+def print_classification_summary(y_true, y_pred):
+    """Per-class results (the overall accuracy is dominated by class N)."""
+    labels = np.arange(len(classes))
+    print('Confusion matrix (rows = true N,S,V,F,Q; columns = predicted):')
+    print(confusion_matrix(y_true, y_pred, labels=labels))
+    print(classification_report(y_true, y_pred, labels=labels, target_names=classes,
+                                digits=4, zero_division=0))
 
 
 def print_results(config, model, Xval, yval, classes):
@@ -208,6 +217,7 @@ def evaluate_tflite(tflite_path, inputs, y):
 
     accuracy = accuracy_score(np.asarray(y).astype(int), predictions)
     print(f'[EVALUATION] TFLite int8 accuracy: {accuracy:.4f}')
+    print_classification_summary(np.asarray(y).astype(int), predictions)
 
     ops = sorted({op['op_name'] for op in interpreter._get_ops_details()})
     print(f'[EVALUATION] TFLite ops used (must be registered in the firmware): {ops}')
