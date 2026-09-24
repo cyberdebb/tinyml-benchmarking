@@ -4,7 +4,7 @@ os.environ.setdefault('TF_ENABLE_ONEDNN_OPTS', '0')
 
 import matplotlib.pyplot as plt
 import numpy as np
-from load_data import aami_mapping, classes, sampling_rate
+from load_data import RR_FEATURES, aami_mapping, classes, sampling_rate
 from keras import models
 from sklearn.metrics import accuracy_score
 import sys
@@ -108,7 +108,10 @@ def beat_features(processed_signal, beat_time):
     ]
 
 
-def extract_neurokit_features(signals, labels):
+def extract_neurokit_features(signals, rr, labels):
+    """12 morphology features per beat (beat_features) followed by its RR
+    intervals (load_data.RR_FEATURES). Same order as extract_features() +
+    the RR values in tinyml_app_{mlp,rf,svm}.cc."""
     feature_rows = []
     total_signals = len(signals)
 
@@ -129,7 +132,10 @@ def extract_neurokit_features(signals, labels):
 
         feature_rows.append(beat_features(processed_signal, len(signal) / (2 * sampling_rate)))
 
-    features = np.asarray(feature_rows, dtype=np.float32)
+    features = np.hstack([
+        np.asarray(feature_rows, dtype=np.float32).reshape(len(signals), -1),
+        np.asarray(rr, dtype=np.float32).reshape(len(signals), len(RR_FEATURES)),
+    ])
     labels = np.asarray(labels)
     print(f'[FEATURES] Extraction completed. Feature matrix shape: {features.shape}')
     print(f'[FEATURES] Labels shape: {labels.shape}')
@@ -137,38 +143,66 @@ def extract_neurokit_features(signals, labels):
 
 
 
-def build_representative_dataset(X, n_samples=500, seed=1):
-    """Calibration samples for the TFLite int8 quantization."""
+def smoothed_class_weights(y):
+    """Class weights shared by the four models: sqrt(n_largest / n_class).
+
+    'balanced' weights (n_largest / n_class) give the rarest classes weights
+    in the hundreds, and the models then call many normal beats S/F/Q (on
+    the inter-patient test, accuracy fell below always predicting N). The
+    square root still favors the rare classes, just less aggressively.
+    """
+    class_ids, counts = np.unique(np.asarray(y).astype(int), return_counts=True)
+    return {int(c): float(np.sqrt(counts.max() / n)) for c, n in zip(class_ids, counts)}
+
+
+def build_representative_dataset(inputs, n_samples=500, seed=1):
+    """Calibration samples for the TFLite int8 quantization.
+
+    inputs is a list with the single input array, or, for a model with
+    several inputs, a dict {input name: array}: the converted model orders
+    its inputs by name, not in the Keras order, so they are fed by name.
+    """
+    arrays = list(inputs.values()) if isinstance(inputs, dict) else inputs
     rng = np.random.default_rng(seed)
-    indices = rng.choice(len(X), size=min(n_samples, len(X)), replace=False)
+    indices = rng.choice(len(arrays[0]), size=min(n_samples, len(arrays[0])), replace=False)
 
     def representative_dataset():
         for index in indices:
-            yield [X[index:index + 1].astype(np.float32)]
+            if isinstance(inputs, dict):
+                yield {name: array[index:index + 1].astype(np.float32)
+                       for name, array in inputs.items()}
+            else:
+                yield [array[index:index + 1].astype(np.float32) for array in inputs]
 
     return representative_dataset
 
 
-def evaluate_tflite(tflite_path, X, y):
-    """Runs the quantized model on X to check the accuracy after
-    quantization (this is what actually runs on the boards)."""
+def evaluate_tflite(tflite_path, inputs, y):
+    """Runs the quantized model on the given inputs (one array per model
+    input) to check the accuracy after quantization (this is what actually
+    runs on the boards). Each TFLite input is matched to the array with the
+    same number of values per sample, like the firmware does."""
     import tensorflow as tf
 
     print('[EVALUATION] Evaluating quantized TFLite model...')
     interpreter = tf.lite.Interpreter(model_path=str(tflite_path))
     interpreter.allocate_tensors()
-    input_details = interpreter.get_input_details()[0]
     output_details = interpreter.get_output_details()[0]
 
-    input_scale, input_zero_point = input_details['quantization']
-    predictions = np.empty(len(X), dtype=np.int64)
+    feeds = []
+    for details in interpreter.get_input_details():
+        size = int(np.prod(details['shape'][1:]))
+        array = next(a for a in inputs if int(np.prod(a.shape[1:])) == size)
+        feeds.append((details, array))
 
-    for index in range(len(X)):
-        sample = X[index:index + 1].astype(np.float32)
-        if input_details['dtype'] == np.int8:
-            sample = np.clip(np.round(sample / input_scale + input_zero_point), -128, 127)
-            sample = sample.astype(np.int8)
-        interpreter.set_tensor(input_details['index'], sample)
+    predictions = np.empty(len(y), dtype=np.int64)
+    for index in range(len(y)):
+        for details, array in feeds:
+            sample = array[index:index + 1].astype(np.float32).reshape(details['shape'])
+            if details['dtype'] == np.int8:
+                scale, zero_point = details['quantization']
+                sample = np.clip(np.round(sample / scale + zero_point), -128, 127).astype(np.int8)
+            interpreter.set_tensor(details['index'], sample)
         interpreter.invoke()
         predictions[index] = np.argmax(interpreter.get_tensor(output_details['index'])[0])
 

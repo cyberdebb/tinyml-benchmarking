@@ -1,6 +1,7 @@
 import wfdb
 import numpy as np
 from pathlib import Path
+from types import SimpleNamespace
 import time
 from scipy.signal import butter, sosfilt
 
@@ -26,13 +27,17 @@ sampling_rate = 360
 #   - DS2: teste. Nunca e usado no treino nem na escolha do modelo; e o
 #     conjunto das metricas finais e do benchmark nas placas
 #     (benchmark_serial.py).
-# Os registros com marcapasso (102, 104, 107, 217) ficam de fora, como
-# recomenda a AAMI.
+#
+# Registros com marcapasso: a AAMI recomenda deixa-los de fora, mas no
+# mapeamento abaixo os batimentos de marcapasso ('/', 'f') sao a classe Q, e
+# sem eles a Q fica com poucas dezenas de batimentos. Por isso os dois
+# registros com marcapasso que tem MLII entram, um de cada lado: 217 no
+# treino e 107 no teste (102 e 104 nao tem MLII).
 DS1_RECORDS = (
     '101', '106', '108', '109', '112', '114', '115', '116', '118', '119', '122',
     '124', '201', '203', '205', '207', '208', '209', '215', '220', '223', '230',
 )
-TEST_RECORDS = (
+DS2_RECORDS = (
     '100', '103', '105', '111', '113', '117', '121', '123', '200', '202', '210',
     '212', '213', '214', '219', '221', '222', '228', '231', '232', '233', '234',
 )
@@ -42,7 +47,24 @@ TEST_RECORDS = (
 # do DS1, 209 boa parte dos S). A distribuicao de classes de cada conjunto e
 # impressa em build_full_dataset() para conferir.
 VALIDATION_RECORDS = ('118', '124', '205', '223')
-TRAIN_RECORDS = tuple(r for r in DS1_RECORDS if r not in VALIDATION_RECORDS)
+PACED_TRAIN_RECORDS = ('217',)
+PACED_TEST_RECORDS = ('107',)
+TRAIN_RECORDS = tuple(r for r in DS1_RECORDS if r not in VALIDATION_RECORDS) + PACED_TRAIN_RECORDS
+TEST_RECORDS = DS2_RECORDS + PACED_TEST_RECORDS
+ALL_RECORDS = DS1_RECORDS + PACED_TRAIN_RECORDS + TEST_RECORDS
+
+# Intervalos RR de cada batimento, em segundos, calculados a partir dos picos R
+# anotados (os mesmos que centralizam a janela do batimento). A forma de onda
+# sozinha nao mostra que um batimento veio adiantado, que e o que mais separa
+# S (e ajuda V/F) de N. O host envia esses valores junto com cada batimento
+# (benchmark_serial.py); o firmware nao calcula RR.
+#   pre_rr:       R atual - R anterior
+#   post_rr:      R seguinte - R atual
+#   local_rr:     media dos ultimos RR_LOCAL_BEATS intervalos pre_rr (ritmo
+#                 do proprio paciente)
+#   pre_rr_ratio: pre_rr / local_rr (prematuridade independente do paciente)
+RR_FEATURES = ('pre_rr', 'post_rr', 'local_rr', 'pre_rr_ratio')
+RR_LOCAL_BEATS = 10
 
 # 1. Filtro Causal (Pronto para o Edge AI / ESP32)
 #
@@ -117,38 +139,52 @@ def load_and_segment_record(record_name, config):
         channel_idx = record.sig_name.index(config.feature)
     else:
         print(f'[RECORD] Record {record_name} does not contain feature {config.feature}.')
-        return np.array([]), np.array([])
-
+        return np.array([]), np.array([]), np.array([])
+        
     raw_signal = record.p_signal[:, channel_idx]
 
     # Define o raio da janela com base no input_size (256 // 2 = 128)
     window_radius = config.input_size // 2
 
-    X, y = [], []
+    # Picos R dos batimentos (anotacoes que nao sao batimento, como '+' e
+    # '~', ficam de fora) -- base tanto das janelas quanto dos intervalos RR.
+    beat_positions = [
+        (sample, symbol)
+        for sample, symbol in zip(annotation.sample, annotation.symbol)
+        if symbol in aami_mapping
+    ]
+    peaks = np.array([sample for sample, _ in beat_positions], dtype=np.float64)
+    pre_rr_all = np.diff(peaks, prepend=np.nan) / record.fs
 
-    for i in range(len(annotation.sample)):
-        peak_idx = annotation.sample[i]
-        symbol = annotation.symbol[i]
+    X, rr, y = [], [], []
 
-        if symbol in aami_mapping:
-            # Garante que não vai estourar o limite do array
-            if peak_idx >= window_radius and peak_idx + window_radius <= len(raw_signal):
-                # O tamanho recortado será exatamente config.input_size. Cru:
-                # sem filtro e sem normalização -- é exatamente o que o
-                # firmware recebe por serial e filtra ele mesmo antes de
-                # inferir (ver tinyml_app_<modelo>.cc).
-                beat_window = raw_signal[peak_idx - window_radius : peak_idx + window_radius]
+    # O primeiro e o ultimo batimento nao tem RR anterior/seguinte.
+    for i in range(1, len(beat_positions) - 1):
+        peak_idx, symbol = beat_positions[i]
 
-                # Ainda descarta janelas degeneradas (linha reta / sensor
-                # travado), que não são um batimento válido de qualquer jeito.
-                if beat_window.max() - beat_window.min() > 0:
-                    X.append(beat_window)
-                    y.append(aami_mapping[symbol])
+        # Garante que não vai estourar o limite do array
+        if peak_idx >= window_radius and peak_idx + window_radius <= len(raw_signal):
+            # O tamanho recortado será exatamente config.input_size. Cru:
+            # sem filtro e sem normalização -- é exatamente o que o
+            # firmware recebe por serial e filtra ele mesmo antes de
+            # inferir (ver tinyml_app_<modelo>.cc).
+            beat_window = raw_signal[peak_idx - window_radius : peak_idx + window_radius]
+
+            # Ainda descarta janelas degeneradas (linha reta / sensor
+            # travado), que não são um batimento válido de qualquer jeito.
+            if beat_window.max() - beat_window.min() > 0:
+                pre_rr = pre_rr_all[i]
+                post_rr = pre_rr_all[i + 1]
+                local_rr = np.mean(pre_rr_all[max(1, i - RR_LOCAL_BEATS + 1):i + 1])
+                X.append(beat_window)
+                rr.append((pre_rr, post_rr, local_rr, pre_rr / local_rr))
+                y.append(aami_mapping[symbol])
 
     X = np.asarray(X)
+    rr = np.asarray(rr)
     y = np.asarray(y)
     print(f'[RECORD] Record {record_name} completed: {len(X)} valid beats extracted (raw, unfiltered).')
-    return X, y
+    return X, rr, y
 
 
 # 3.1 Cache local do dataset já processado (janelas extraídas de todos os registros)
@@ -157,23 +193,25 @@ def dataset_cache_path(feature, input_size):
 
 
 def load_cached_dataset(config):
-    """Returns (X, y, records) from the raw dataset cache, building it first
-    if needed. records holds the MIT-BIH record number of every beat, which
-    is what the inter-patient split is based on."""
+    """Returns (X, rr, y, records) from the raw dataset cache, building it
+    first if needed. records holds the MIT-BIH record number of every beat,
+    which is what the inter-patient split is based on."""
     cache_path = dataset_cache_path(config.feature, config.input_size)
     if cache_path.exists():
         print(f'[CACHE] Loading cached raw dataset from {cache_path}...')
         with np.load(cache_path) as cached:
-            if 'records' in cached.files:
-                X_total, y_total, records = cached['X'], cached['y'], cached['records']
+            if 'rr' in cached.files and 'records' in cached.files and (
+                    set(np.unique(cached['records'])) == {int(r) for r in ALL_RECORDS}):
+                X_total, rr_total = cached['X'], cached['rr']
+                y_total, records = cached['y'], cached['records']
                 print(f'[CACHE] Loaded cached dataset: X={X_total.shape}, y={y_total.shape}')
-                return X_total, y_total, records
-        # Caches from before the inter-patient split don't know which record
-        # each beat came from, so they can't be split by patient.
-        print('[CACHE] Cached dataset has no record ids (old format), rebuilding it...')
+                return X_total, rr_total, y_total, records
+        # Caches from an older version (no RR intervals / record ids, or a
+        # different set of records) are rebuilt from the local MIT-BIH files.
+        print('[CACHE] Cached dataset is from an older version, rebuilding it...')
 
-    records_to_load = DS1_RECORDS + TEST_RECORDS
-    all_X, all_y, all_records = [], [], []
+    records_to_load = ALL_RECORDS
+    all_X, all_rr, all_y, all_records = [], [], [], []
     print(f"[CONFIG] Number of records: {len(records_to_load)}")
 
     for record_index, record_name in enumerate(records_to_load, start=1):
@@ -182,9 +220,10 @@ def load_cached_dataset(config):
         # Loop infinito que só é quebrado quando o download/processamento dá certo
         while True:
             try:
-                X_patient, y_patient = load_and_segment_record(record_name, config)
+                X_patient, rr_patient, y_patient = load_and_segment_record(record_name, config)
                 if len(X_patient) > 0:
                     all_X.append(X_patient)
+                    all_rr.append(rr_patient)
                     all_y.append(y_patient)
                     all_records.append(np.full(len(X_patient), int(record_name), dtype=np.int16))
                 else:
@@ -199,6 +238,7 @@ def load_cached_dataset(config):
                 time.sleep(5)  # Espera 5 segundos antes de tentar de novo para não sobrecarregar o PhysioNet
 
     X_total = np.concatenate(all_X, axis=0).astype(np.float32)
+    rr_total = np.concatenate(all_rr, axis=0).astype(np.float32)
     y_total = np.concatenate(all_y, axis=0).astype(np.float32)
     records = np.concatenate(all_records, axis=0)
     print(f'[DATA] Complete dataset shape: X={X_total.shape}, y={y_total.shape}')
@@ -209,15 +249,14 @@ def load_cached_dataset(config):
     # sinal que receberia em um deployment real (ECG cru de um ADC), e é ele
     # mesmo quem filtra antes de inferir.
     cache_directory.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(cache_path, X=X_total, y=y_total, records=records)
+    np.savez_compressed(cache_path, X=X_total, rr=rr_total, y=y_total, records=records)
     print(f'[CACHE] Saved raw dataset to {cache_path}.')
-    return X_total, y_total, records
+    return X_total, rr_total, y_total, records
 
 
-def select_records(X, y, records, record_names):
-    """Keeps only the beats that belong to the given records."""
-    mask = np.isin(records, [int(name) for name in record_names])
-    return X[mask], y[mask]
+def select_records(records, record_names):
+    """Boolean mask of the beats that belong to the given records."""
+    return np.isin(records, [int(name) for name in record_names])
 
 
 def print_class_distribution(name, y):
@@ -228,37 +267,33 @@ def print_class_distribution(name, y):
 
 # 4. Função principal de carregamento
 def build_full_dataset(config):
-    """With config.split, returns (X_train, y_train, X_val, y_val, X_test,
-    y_test), split by patient (see DS1_RECORDS / TEST_RECORDS above);
-    otherwise returns every beat as (X, y). Beats come band-pass filtered."""
+    """With config.split, returns (train, validation, test), split by patient
+    (see DS1_RECORDS / TEST_RECORDS above); otherwise returns every beat as a
+    single set. Each set has .X (band-pass filtered beat windows), .rr (the
+    RR_FEATURES of each beat) and .y (class ids)."""
     print('[START] Dataset loading started.')
     print(f"[CONFIG] Feature: {config.feature}")
     print(f"[CONFIG] Input window size: {config.input_size}")
 
-    X_total, y_total, records = load_cached_dataset(config)
+    X_total, rr_total, y_total, records = load_cached_dataset(config)
+
+    def make_set(name, mask):
+        # O filtro só é aplicado aqui, sobre os splits em memória -- nunca é
+        # salvo de volta no cache. Reproduz exatamente o que o firmware faz
+        # com cada janela recebida por serial (ver filter_beats acima).
+        print_class_distribution(name, y_total[mask])
+        return SimpleNamespace(X=filter_beats(X_total[mask]), rr=rr_total[mask], y=y_total[mask])
 
     # 3. Usa a config para decidir se faz o split ou não
     if config.split:
         print('[SPLIT] Splitting dataset by patient (inter-patient, de Chazal DS1/DS2)...')
-        X, y = select_records(X_total, y_total, records, TRAIN_RECORDS)
-        Xval, yval = select_records(X_total, y_total, records, VALIDATION_RECORDS)
-        Xtest, ytest = select_records(X_total, y_total, records, TEST_RECORDS)
-        print_class_distribution('Training (DS1)', y)
-        print_class_distribution('Validation (DS1)', yval)
-        print_class_distribution('Test (DS2)', ytest)
-
-        # O filtro só é aplicado aqui, sobre os splits em memória -- nunca é
-        # salvo de volta no cache. Reproduz exatamente o que o firmware faz
-        # com cada janela recebida por serial (ver filter_beats acima).
-        X = filter_beats(X)
-        Xval = filter_beats(Xval)
-        Xtest = filter_beats(Xtest)
-
+        train = make_set('Training (DS1)', select_records(records, TRAIN_RECORDS))
+        validation = make_set('Validation (DS1)', select_records(records, VALIDATION_RECORDS))
+        test = make_set('Test (DS2)', select_records(records, TEST_RECORDS))
         print('[DONE] Dataset loading completed.')
-        return X, y, Xval, yval, Xtest, ytest
-    else:
-        print('[SPLIT] Dataset split disabled.')
-        X_total = filter_beats(X_total)
-        print(f'[DATA] Returning complete dataset with shape: {X_total.shape}')
-        print('[DONE] Dataset loading completed.')
-        return X_total, y_total
+        return train, validation, test
+
+    print('[SPLIT] Dataset split disabled.')
+    everything = make_set('All records', np.ones(len(y_total), dtype=bool))
+    print('[DONE] Dataset loading completed.')
+    return everything

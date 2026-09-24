@@ -25,6 +25,10 @@ namespace {
 
 constexpr char TAG[] = "tinyml";
 constexpr int kInputSamples = 256;
+// RR intervals sent after the samples on each line, in the order of
+// RR_FEATURES in ml/src/load_data.py: pre_rr, post_rr, local_rr,
+// pre_rr_ratio (seconds / ratio).
+constexpr int kRrFeatures = 4;
 constexpr int kClassCount = 5;
 constexpr int kLineSize = 4096;
 constexpr char kModelName[] = "CNN";
@@ -64,7 +68,8 @@ constexpr size_t kArenaSize = 128 * 1024;
 uint8_t *tensor_arena = nullptr;
 size_t arena_size = 0;
 tflite::MicroInterpreter *interpreter = nullptr;
-TfLiteTensor *input_tensor = nullptr;
+TfLiteTensor *beat_tensor = nullptr;
+TfLiteTensor *rr_tensor = nullptr;
 TfLiteTensor *output_tensor = nullptr;
 
 bool allocate_arena()
@@ -81,6 +86,15 @@ bool allocate_arena()
     return true;
 }
 
+int element_count(const TfLiteTensor *tensor)
+{
+    int count = 1;
+    for (int i = 0; i < tensor->dims->size; ++i) {
+        count *= tensor->dims->data[i];
+    }
+    return count;
+}
+
 bool init_model()
 {
     if (!allocate_arena()) {
@@ -94,7 +108,7 @@ bool init_model()
         return false;
     }
 
-    static tflite::MicroMutableOpResolver<16> resolver;
+    static tflite::MicroMutableOpResolver<20> resolver;
     if (resolver.AddConv2D() != kTfLiteOk ||
         resolver.AddDepthwiseConv2D() != kTfLiteOk ||
         resolver.AddFullyConnected() != kTfLiteOk ||
@@ -104,6 +118,7 @@ bool init_model()
         resolver.AddExpandDims() != kTfLiteOk ||
         resolver.AddSqueeze() != kTfLiteOk ||
         resolver.AddAdd() != kTfLiteOk ||
+        resolver.AddConcatenation() != kTfLiteOk ||
         resolver.AddMul() != kTfLiteOk ||
         resolver.AddRelu() != kTfLiteOk ||
         resolver.AddSoftmax() != kTfLiteOk ||
@@ -122,7 +137,20 @@ bool init_model()
     }
 
     interpreter = &static_interpreter;
-    input_tensor = interpreter->input(0);
+    // Two inputs (beat, RR intervals). Each is found by its size: the
+    // TFLite input order doesn't necessarily follow the Keras model's.
+    for (size_t i = 0; i < interpreter->inputs_size(); ++i) {
+        TfLiteTensor *tensor = interpreter->input(i);
+        if (element_count(tensor) == kInputSamples) {
+            beat_tensor = tensor;
+        } else if (element_count(tensor) == kRrFeatures) {
+            rr_tensor = tensor;
+        }
+    }
+    if (beat_tensor == nullptr || rr_tensor == nullptr) {
+        ESP_LOGE(TAG, "Model inputs are not 256 beat samples + 4 RR values");
+        return false;
+    }
     output_tensor = interpreter->output(0);
 
     ESP_LOGI(TAG, "Model size: %u bytes, arena used: %u / %u bytes",
@@ -132,28 +160,60 @@ bool init_model()
     return true;
 }
 
-int classify(const float *beat)
+void normalize_beat(const float *beat, float *normalized)
+{
+    float mean = 0.0f;
+    for (int i = 0; i < kInputSamples; ++i) {
+        mean += beat[i];
+    }
+    mean /= kInputSamples;
+
+    float variance = 0.0f;
+    for (int i = 0; i < kInputSamples; ++i) {
+        const float delta = beat[i] - mean;
+        variance += delta * delta;
+    }
+    const float std_dev = std::sqrt(variance / kInputSamples);
+
+    for (int i = 0; i < kInputSamples; ++i) {
+        normalized[i] = (beat[i] - mean) / (std_dev + 1e-6f);
+    }
+}
+
+// Copies values into a float32 or int8 (quantized) input tensor.
+bool fill_input(TfLiteTensor *tensor, const float *values, int count)
+{
+    if (tensor->type == kTfLiteFloat32) {
+        std::memcpy(tensor->data.f, values, count * sizeof(float));
+        return true;
+    }
+    if (tensor->type == kTfLiteInt8) {
+        const float scale = tensor->params.scale;
+        const int zero_point = tensor->params.zero_point;
+        for (int i = 0; i < count; ++i) {
+            const long q = std::lround(values[i] / scale) + zero_point;
+            tensor->data.int8[i] = static_cast<int8_t>(std::clamp(q, -128L, 127L));
+        }
+        return true;
+    }
+    return false;
+}
+
+int classify(const float *beat, const float *rr)
 {
     if (interpreter == nullptr) {
         ESP_LOGE(TAG, "TFLite model is not initialized");
         return -1;
     }
 
-    if (input_tensor->type == kTfLiteFloat32) {
-        const int count = static_cast<int>(input_tensor->bytes / sizeof(float));
-        std::memcpy(input_tensor->data.f, beat,
-                    std::min(count, kInputSamples) * sizeof(float));
-    } else if (input_tensor->type == kTfLiteInt8) {
-        const int count = static_cast<int>(
-            std::min(input_tensor->bytes, static_cast<size_t>(kInputSamples)));
-        const float scale = input_tensor->params.scale;
-        const int zero_point = input_tensor->params.zero_point;
-        for (int i = 0; i < count; ++i) {
-            const long q = std::lround(beat[i] / scale) + zero_point;
-            input_tensor->data.int8[i] = static_cast<int8_t>(std::clamp(q, -128L, 127L));
-        }
-    } else {
-        ESP_LOGE(TAG, "Unsupported TFLite input type: %d", input_tensor->type);
+    // Same per-beat standardization as normalize_beats() in
+    // cnn_classifier.py.
+    float normalized[kInputSamples];
+    normalize_beat(beat, normalized);
+
+    if (!fill_input(beat_tensor, normalized, kInputSamples) ||
+        !fill_input(rr_tensor, rr, kRrFeatures)) {
+        ESP_LOGE(TAG, "Unsupported TFLite input type: %d", beat_tensor->type);
         return -1;
     }
 
@@ -200,11 +260,13 @@ void print_model_info()
 // ---------------------------------------------------------------------------
 // Serial entry
 // ---------------------------------------------------------------------------
-bool parse_beat(char *line, float *beat)
+// Parses kInputSamples beat samples followed by kRrFeatures RR values.
+bool parse_beat(char *line, float *beat, float *rr)
 {
     char *token = std::strtok(line, ", \r\n");
-    for (int i = 0; i < kInputSamples; ++i) {
-        if (token == nullptr || std::sscanf(token, "%f", &beat[i]) != 1) {
+    for (int i = 0; i < kInputSamples + kRrFeatures; ++i) {
+        float *value = i < kInputSamples ? &beat[i] : &rr[i - kInputSamples];
+        if (token == nullptr || std::sscanf(token, "%f", value) != 1) {
             return false;
         }
         token = std::strtok(nullptr, ", \r\n");
@@ -263,18 +325,19 @@ extern "C" void tinyml_app_main(void)
     }
 
     print_model_info();
-    ESP_LOGI(TAG, "Ready. Send one 256-sample CSV beat per line.");
+    ESP_LOGI(TAG, "Ready. Send one 256-sample CSV beat + 4 RR values per line.");
 
     // static so the main task stack is not blown
     static char line[kLineSize];
     static float beat[kInputSamples];
+    static float rr[kRrFeatures];
 
     while (std::fgets(line, sizeof(line), stdin) != nullptr) {
         if (is_blank(line)) {
             continue;
         }
-        if (!parse_beat(line, beat)) {
-            ESP_LOGW(TAG, "Expected 256 comma-separated samples");
+        if (!parse_beat(line, beat, rr)) {
+            ESP_LOGW(TAG, "Expected 256 samples + 4 RR values, comma-separated");
             continue;
         }
 
@@ -283,7 +346,7 @@ extern "C" void tinyml_app_main(void)
         const uint32_t filter_start = esp32_timer_get_cycles();
         filter_sos(beat);
         const uint32_t inference_start = esp32_timer_get_cycles();
-        const int prediction = classify(beat);
+        const int prediction = classify(beat, rr);
         const uint32_t end = esp32_timer_get_cycles();
 
         const long long filter_us = esp32_cycles_to_us(filter_start, inference_start);

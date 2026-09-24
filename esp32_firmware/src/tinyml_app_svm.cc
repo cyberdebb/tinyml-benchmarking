@@ -22,6 +22,10 @@ namespace {
 
 constexpr char TAG[] = "tinyml";
 constexpr int kInputSamples = 256;
+// RR intervals sent after the samples on each line, in the order of
+// RR_FEATURES in ml/src/load_data.py: pre_rr, post_rr, local_rr,
+// pre_rr_ratio (seconds / ratio).
+constexpr int kRrFeatures = 4;
 constexpr int kClassCount = 5;
 constexpr int kLineSize = 4096;
 constexpr char kModelName[] = "SVM";
@@ -56,7 +60,10 @@ void filter_sos(float *signal)
     }
 }
 
-constexpr int kFeatureCount = 12;
+constexpr int kMorphologyFeatures = 12;
+// Morphology features + RR values, same order as
+// extract_neurokit_features() in ml/src/helpers.py.
+constexpr int kFeatureCount = kMorphologyFeatures + kRrFeatures;
 // 0.6 s around the R peak at 360 Hz (P wave, QRS and most of the T wave).
 // Must match beat_features() in ml/src/helpers.py.
 constexpr int kFeatureWindow = 216;
@@ -129,10 +136,13 @@ bool init_model()
     return true;
 }
 
-int classify(const float *beat)
+int classify(const float *beat, const float *rr)
 {
     float features[kFeatureCount];
     extract_features(beat, features);
+    for (int i = 0; i < kRrFeatures; ++i) {
+        features[kMorphologyFeatures + i] = rr[i];
+    }
 
     float scaled[kFeatureCount];
     for (int i = 0; i < kFeatureCount; ++i) {
@@ -154,11 +164,13 @@ void print_model_info()
 // ---------------------------------------------------------------------------
 // Serial entry
 // ---------------------------------------------------------------------------
-bool parse_beat(char *line, float *beat)
+// Parses kInputSamples beat samples followed by kRrFeatures RR values.
+bool parse_beat(char *line, float *beat, float *rr)
 {
     char *token = std::strtok(line, ", \r\n");
-    for (int i = 0; i < kInputSamples; ++i) {
-        if (token == nullptr || std::sscanf(token, "%f", &beat[i]) != 1) {
+    for (int i = 0; i < kInputSamples + kRrFeatures; ++i) {
+        float *value = i < kInputSamples ? &beat[i] : &rr[i - kInputSamples];
+        if (token == nullptr || std::sscanf(token, "%f", value) != 1) {
             return false;
         }
         token = std::strtok(nullptr, ", \r\n");
@@ -217,18 +229,19 @@ extern "C" void tinyml_app_main(void)
     }
 
     print_model_info();
-    ESP_LOGI(TAG, "Ready. Send one 256-sample CSV beat per line.");
+    ESP_LOGI(TAG, "Ready. Send one 256-sample CSV beat + 4 RR values per line.");
 
     // static so the main task stack is not blown
     static char line[kLineSize];
     static float beat[kInputSamples];
+    static float rr[kRrFeatures];
 
     while (std::fgets(line, sizeof(line), stdin) != nullptr) {
         if (is_blank(line)) {
             continue;
         }
-        if (!parse_beat(line, beat)) {
-            ESP_LOGW(TAG, "Expected 256 comma-separated samples");
+        if (!parse_beat(line, beat, rr)) {
+            ESP_LOGW(TAG, "Expected 256 samples + 4 RR values, comma-separated");
             continue;
         }
 
@@ -237,7 +250,7 @@ extern "C" void tinyml_app_main(void)
         const uint32_t filter_start = esp32_timer_get_cycles();
         filter_sos(beat);
         const uint32_t inference_start = esp32_timer_get_cycles();
-        const int prediction = classify(beat);
+        const int prediction = classify(beat, rr);
         const uint32_t end = esp32_timer_get_cycles();
 
         const long long filter_us = esp32_cycles_to_us(filter_start, inference_start);

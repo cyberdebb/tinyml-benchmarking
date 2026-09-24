@@ -31,6 +31,10 @@ extern "C" int _write(int file, char *ptr, int len)
 namespace {
 
 constexpr int kInputSamples = 256;
+// RR intervals sent after the samples on each line, in the order of
+// RR_FEATURES in ml/src/load_data.py: pre_rr, post_rr, local_rr,
+// pre_rr_ratio (seconds / ratio).
+constexpr int kRrFeatures = 4;
 constexpr int kClassCount = 5;
 constexpr int kLineSize = 4096;
 constexpr char kModelName[] = "MLP";
@@ -65,7 +69,10 @@ void filter_sos(float *signal)
     }
 }
 
-constexpr int kFeatureCount = 12;
+constexpr int kMorphologyFeatures = 12;
+// Morphology features + RR values, same order as
+// extract_neurokit_features() in ml/src/helpers.py.
+constexpr int kFeatureCount = kMorphologyFeatures + kRrFeatures;
 // 0.6 s around the R peak at 360 Hz (P wave, QRS and most of the T wave).
 // Must match beat_features() in ml/src/helpers.py.
 constexpr int kFeatureWindow = 216;
@@ -206,7 +213,7 @@ bool init_model()
     return true;
 }
 
-int classify(const float *beat)
+int classify(const float *beat, const float *rr)
 {
     if (interpreter == nullptr) {
         std::printf("[tinyml] TFLite model is not initialized\n");
@@ -215,6 +222,9 @@ int classify(const float *beat)
 
     float features[kFeatureCount];
     extract_features(beat, features);
+    for (int i = 0; i < kRrFeatures; ++i) {
+        features[kMorphologyFeatures + i] = rr[i];
+    }
 
     // Same StandardScaler as in training (mlp_classifier.py), applied
     // before quantizing so every feature uses the int8 range.
@@ -283,10 +293,12 @@ void print_model_info()
 // ---------------------------------------------------------------------------
 // Serial entry
 // ---------------------------------------------------------------------------
-bool parse_beat(char *line, float *beat)
+// Parses kInputSamples beat samples followed by kRrFeatures RR values.
+bool parse_beat(char *line, float *beat, float *rr)
 {
     char *token = std::strtok(line, ", \r\n");
-    for (int i = 0; i < kInputSamples; ++i) {
+    for (int i = 0; i < kInputSamples + kRrFeatures; ++i) {
+        float *value = i < kInputSamples ? &beat[i] : &rr[i - kInputSamples];
         // strtof instead of sscanf("%f"): newlib-nano leaves float support
         // out of scanf unless linked with -u _scanf_float, so sscanf
         // would silently convert nothing.
@@ -294,7 +306,7 @@ bool parse_beat(char *line, float *beat)
         if (token == nullptr) {
             return false;
         }
-        beat[i] = std::strtof(token, &end);
+        *value = std::strtof(token, &end);
         if (end == token) {
             return false;
         }
@@ -366,18 +378,19 @@ extern "C" void tinyml_app_main(void)
     }
 
     print_model_info();
-    std::printf("[tinyml] Ready. Send one 256-sample CSV beat per line.\n");
+    std::printf("[tinyml] Ready. Send one 256-sample CSV beat + 4 RR values per line.\n");
 
     // static so the main task stack is not blown
     static char line[kLineSize];
     static float beat[kInputSamples];
+    static float rr[kRrFeatures];
 
     while (uart_read_line(&huart3, line, sizeof(line)) != nullptr) {
         if (is_blank(line)) {
             continue;
         }
-        if (!parse_beat(line, beat)) {
-            std::printf("[tinyml] Expected 256 comma-separated samples\n");
+        if (!parse_beat(line, beat, rr)) {
+            std::printf("[tinyml] Expected 256 samples + 4 RR values, comma-separated\n");
             continue;
         }
 
@@ -386,7 +399,7 @@ extern "C" void tinyml_app_main(void)
         const uint32_t filter_start = stm_timer_get_cycles();
         filter_sos(beat);
         const uint32_t inference_start = stm_timer_get_cycles();
-        const int prediction = classify(beat);
+        const int prediction = classify(beat, rr);
         const uint32_t end = stm_timer_get_cycles();
 
         const unsigned long filter_us = stm_cycles_to_us(filter_start, inference_start);

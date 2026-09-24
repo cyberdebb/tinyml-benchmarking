@@ -58,32 +58,33 @@ def load_test_set():
         sys.exit(1)
 
     with np.load(cache_file) as data:
-        if 'records' not in data.files:
-            print('[ERROR] Dataset cache has no record ids (old format).')
+        if 'rr' not in data.files or 'records' not in data.files:
+            print('[ERROR] Dataset cache is from an older version (no RR intervals).')
             print('[ERROR] Run the training (pipeline step 1) again to rebuild it.')
             sys.exit(1)
         X_total = data['X']
+        rr_total = data['rr']
         y_total = data['y']
         records = data['records']
 
-    Xtest, ytest = select_records(X_total, y_total, records, TEST_RECORDS)
-    print(f'[DATA] Test set: {Xtest.shape[0]} beats')
-    return Xtest, ytest.astype(int)
+    mask = select_records(records, TEST_RECORDS)
+    print(f'[DATA] Test set: {mask.sum()} beats')
+    return X_total[mask], rr_total[mask], y_total[mask].astype(int)
 
 
-def select_beats(Xtest, ytest, n_beats, seed=1):
+def select_beats(Xtest, rrtest, ytest, n_beats, seed=1):
     """Picks a random subset, keeping the class distribution of the full set."""
     if n_beats >= len(Xtest):
-        return Xtest, ytest
+        return Xtest, rrtest, ytest
+    indices = np.arange(len(Xtest))
     try:
-        Xselected, _, yselected, _ = train_test_split(
-            Xtest, ytest, train_size=n_beats, stratify=ytest, random_state=seed)
+        indices, _ = train_test_split(
+            indices, train_size=n_beats, stratify=ytest, random_state=seed)
     except ValueError:
         # A class too rare to stratify (fewer than 2 beats): plain random subset.
         rng = np.random.default_rng(seed)
         indices = rng.choice(len(Xtest), size=n_beats, replace=False)
-        return Xtest[indices], ytest[indices]
-    return Xselected, yselected
+    return Xtest[indices], rrtest[indices], ytest[indices]
 
 
 def wait_for_ready(connection, timeout=20):
@@ -109,9 +110,10 @@ def wait_for_ready(connection, timeout=20):
     sys.exit(1)
 
 
-def send_beat(connection, beat):
-    """Sends one beat and returns (predicted_class, inference_microseconds)."""
-    payload = ','.join(f'{value:.5f}' for value in beat) + '\n'
+def send_beat(connection, beat, rr):
+    """Sends one beat followed by its RR intervals (load_data.RR_FEATURES)
+    and returns (predicted_class, inference_microseconds, filter_microseconds)."""
+    payload = ','.join(f'{value:.5f}' for value in (*beat, *rr)) + '\n'
     connection.reset_input_buffer()
     connection.write(payload.encode('ascii'))
     connection.flush()
@@ -213,8 +215,8 @@ def main():
     parser.add_argument('--baud', type=int, default=baud_rate)
     arguments = parser.parse_args()
 
-    Xtest, ytest = load_test_set()
-    X_selected, y_selected = select_beats(Xtest, ytest, arguments.beats)
+    Xtest, rrtest, ytest = load_test_set()
+    X_selected, rr_selected, y_selected = select_beats(Xtest, rrtest, ytest, arguments.beats)
     print(f'[DATA] Sending {len(X_selected)} beats to {arguments.port}')
 
     predictions = []
@@ -233,8 +235,8 @@ def main():
         model_info = wait_for_ready(connection)
 
         start_time = time.time()
-        for index, beat in enumerate(X_selected, start=1):
-            prediction, inference, filtering = send_beat(connection, beat)
+        for index, (beat, rr) in enumerate(zip(X_selected, rr_selected), start=1):
+            prediction, inference, filtering = send_beat(connection, beat, rr)
             predictions.append(prediction)
             inference_us.append(inference)
             filter_us.append(filtering)

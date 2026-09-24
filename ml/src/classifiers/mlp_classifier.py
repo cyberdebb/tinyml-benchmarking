@@ -14,7 +14,6 @@ from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, confusion_matrix,  accuracy_score,  precision_score,  recall_score,  f1_score,  roc_curve,  auc,  precision_recall_curve
 from sklearn.preprocessing import StandardScaler, label_binarize
-from sklearn.utils.class_weight import compute_class_weight
 import joblib
 import sys
 import warnings
@@ -22,7 +21,8 @@ import warnings
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from load_data import build_full_dataset, classes
-from helpers import build_representative_dataset, evaluate_tflite, extract_neurokit_features
+from helpers import (build_representative_dataset, evaluate_tflite, extract_neurokit_features,
+                     smoothed_class_weights)
 
 
 def train_model_sklearn(x_train, y_train, x_validate, y_validate):
@@ -49,17 +49,15 @@ def train_model_sklearn(x_train, y_train, x_validate, y_validate):
         early_stopping=False,
     )
 
-    class_ids = np.unique(y_train)
-    class_weights = compute_class_weight(
-        class_weight='balanced',
-        classes=class_ids,
-        y=y_train,
-    )
+    # MLPClassifier has no class_weight, so the same smoothed weights as the
+    # other models are applied by resampling: each class ends up with
+    # count * weight samples (= sqrt(n_largest * n_class)).
+    class_weights = smoothed_class_weights(y_train)
     balanced_indices = []
     random_generator = np.random.default_rng(42)
-    for class_id in np.unique(y_train):
-        class_indices = np.flatnonzero(y_train == class_id)
-        target_count = int(np.max(np.bincount(y_train.astype(int))))
+    for class_id, weight in class_weights.items():
+        class_indices = np.flatnonzero(y_train.astype(int) == class_id)
+        target_count = int(round(len(class_indices) * weight))
         balanced_indices.extend(
             random_generator.choice(class_indices, size=target_count, replace=True)
         )
@@ -67,8 +65,8 @@ def train_model_sklearn(x_train, y_train, x_validate, y_validate):
 
     balanced_x_train = x_train[balanced_indices]
     balanced_y_train = y_train[balanced_indices]
-    print(f'[TRAIN] Class weights: {dict(zip(class_ids, class_weights))}')
-    print(f'[TRAIN] Balanced training samples: {len(balanced_indices)}')
+    print(f'[TRAIN] Class weights: {class_weights}')
+    print(f'[TRAIN] Resampled training samples: {len(balanced_indices)}')
 
     best_validation_accuracy = -np.inf
     epochs_without_improvement = 0
@@ -224,7 +222,7 @@ def export_model(mlp_classifier, scaler, x_train):
     # the only one of the four models shipping fully uncompressed.
     converter = tf.lite.TFLiteConverter.from_keras_model(keras_model)
     converter.optimizations = [tf.lite.Optimize.DEFAULT]
-    converter.representative_dataset = build_representative_dataset(x_train)
+    converter.representative_dataset = build_representative_dataset([x_train])
     converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
     converter.inference_input_type = tf.int8
     converter.inference_output_type = tf.int8
@@ -240,15 +238,15 @@ def main():
     directory = ''
     config = SimpleNamespace(split=True, input_size=256, feature='MLII')
     print('[DATA] Loading ECG dataset...')
-    x_train, y_train, x_validate, y_validate, x_test, y_test = build_full_dataset(config)
-    print(f'[DATA] Training windows shape: {x_train.shape}')
-    print(f'[DATA] Validation windows shape: {x_validate.shape}')
-    print(f'[DATA] Test windows shape: {x_test.shape}')
-    x_train, y_train = extract_neurokit_features(x_train, y_train)
-    x_validate, y_validate = extract_neurokit_features(x_validate, y_validate)
-    x_test, y_test = extract_neurokit_features(x_test, y_test)
+    train, validation, test = build_full_dataset(config)
+    print(f'[DATA] Training windows shape: {train.X.shape}')
+    print(f'[DATA] Validation windows shape: {validation.X.shape}')
+    print(f'[DATA] Test windows shape: {test.X.shape}')
+    x_train, y_train = extract_neurokit_features(train.X, train.rr, train.y)
+    x_validate, y_validate = extract_neurokit_features(validation.X, validation.rr, validation.y)
+    x_test, y_test = extract_neurokit_features(test.X, test.rr, test.y)
 
-    # The 12 features have very different ranges, and the int8 input tensor
+    # The features have very different ranges, and the int8 input tensor
     # quantizes all of them with a single scale: without standardizing,
     # small-range features collapse to one or two int8 levels. The firmware
     # applies the same scaler (mlp_classifier_scaler.h) before quantizing.
@@ -267,7 +265,7 @@ def main():
     # or in the early stopping done on the validation set.
     evaluate_model(trained_mlp_model, x_test, y_test, directory)
     tflite_path = export_model(trained_mlp_model, scaler, x_train)
-    evaluate_tflite(tflite_path, x_test, y_test)
+    evaluate_tflite(tflite_path, [x_test], y_test)
     print('[DONE] MLP classifier execution finished.')
 
 if __name__ == "__main__":
