@@ -26,6 +26,7 @@ classifier_scripts = {
 # .tflite models are compiled into the firmware as C arrays (<name>.h)
 tflite_files = ('cnn_classifier.tflite', 'mlp_classifier.tflite')
 header_files = (
+    'mlp_classifier_scaler.h',
     'svm_classifier.h',
     'svm_classifier_scaler.h',
     'random_forest_classifier.h',

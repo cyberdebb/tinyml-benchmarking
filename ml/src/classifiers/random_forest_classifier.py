@@ -64,12 +64,6 @@ def export_model(forest_classifier):
           f'(~{model_bytes / 1024:.1f} KB estimated).')
     print('[EXPORT] Saved Random Forest C header model.')
 
-def leave_one_record_out(sources):
-    for source in np.unique(sources):
-        test_indexes = np.flatnonzero(sources == source)
-        train_indexes = np.flatnonzero(sources != source)
-        yield train_indexes, test_indexes
-
 def evaluate_classifier(confusion_matrix_values, outputs):
     quality_measures = ["Se", "Sp", "Pp", "FPR", "Ac", "F1"]
     quality = np.empty((len(quality_measures), len(outputs)))
@@ -99,7 +93,10 @@ def main():
     config = SimpleNamespace(split=True, input_size=256, feature='MLII')
     print(f'[CONFIG] Configuration: {vars(config)}')
     print('[DATA] Loading ECG dataset...')
-    train_features, train_labels, test_features, test_labels = build_full_dataset(config)
+    # The validation set (patients held out of DS1) is only used by the
+    # models with early stopping (CNN, MLP); RF trains on the same training
+    # patients and is evaluated on the same test patients (DS2).
+    train_features, train_labels, _, _, test_features, test_labels = build_full_dataset(config)
     print(f'[DATA] Training windows shape: {train_features.shape}')
     print(f'[DATA] Test windows shape: {test_features.shape}')
     train_features, train_labels = extract_neurokit_features(train_features, train_labels)

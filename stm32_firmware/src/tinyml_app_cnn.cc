@@ -43,6 +43,14 @@ constexpr float kSos[4][6] = {
 
 void filter_sos(float *signal)
 {
+    // Subtract the window's starting level first, like filter_beats() in
+    // ml/src/load_data.py: the filter starts from zero state, and without
+    // this the window's DC offset turns into a transient across the window.
+    const float offset = signal[0];
+    for (int i = 0; i < kInputSamples; ++i) {
+        signal[i] -= offset;
+    }
+
     for (int section = 0; section < 4; ++section) {
         float state_1 = 0.0f;
         float state_2 = 0.0f;

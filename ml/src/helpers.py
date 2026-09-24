@@ -4,7 +4,7 @@ os.environ.setdefault('TF_ENABLE_ONEDNN_OPTS', '0')
 
 import matplotlib.pyplot as plt
 import numpy as np
-from load_data import aami_mapping, classes
+from load_data import aami_mapping, classes, sampling_rate
 from keras import models
 from sklearn.metrics import accuracy_score
 import sys
@@ -77,7 +77,8 @@ def numeric_value(values, default=0.0):
 
 
 def beat_features(processed_signal, beat_time):
-    sampling_rate = 150
+    # 0.6 s around the R peak (216 samples at 360 Hz): P wave, QRS and most
+    # of the T wave. Must match kFeatureWindow in tinyml_app_{mlp,rf,svm}.cc.
     beat_window_seconds = 0.6
     beat_index = int(round(beat_time * sampling_rate))
     half_window = int(beat_window_seconds * sampling_rate / 2)
@@ -108,7 +109,6 @@ def beat_features(processed_signal, beat_time):
 
 
 def extract_neurokit_features(signals, labels):
-    sampling_rate = 150
     feature_rows = []
     total_signals = len(signals)
 
@@ -134,3 +134,47 @@ def extract_neurokit_features(signals, labels):
     print(f'[FEATURES] Extraction completed. Feature matrix shape: {features.shape}')
     print(f'[FEATURES] Labels shape: {labels.shape}')
     return features, labels
+
+
+
+def build_representative_dataset(X, n_samples=500, seed=1):
+    """Calibration samples for the TFLite int8 quantization."""
+    rng = np.random.default_rng(seed)
+    indices = rng.choice(len(X), size=min(n_samples, len(X)), replace=False)
+
+    def representative_dataset():
+        for index in indices:
+            yield [X[index:index + 1].astype(np.float32)]
+
+    return representative_dataset
+
+
+def evaluate_tflite(tflite_path, X, y):
+    """Runs the quantized model on X to check the accuracy after
+    quantization (this is what actually runs on the boards)."""
+    import tensorflow as tf
+
+    print('[EVALUATION] Evaluating quantized TFLite model...')
+    interpreter = tf.lite.Interpreter(model_path=str(tflite_path))
+    interpreter.allocate_tensors()
+    input_details = interpreter.get_input_details()[0]
+    output_details = interpreter.get_output_details()[0]
+
+    input_scale, input_zero_point = input_details['quantization']
+    predictions = np.empty(len(X), dtype=np.int64)
+
+    for index in range(len(X)):
+        sample = X[index:index + 1].astype(np.float32)
+        if input_details['dtype'] == np.int8:
+            sample = np.clip(np.round(sample / input_scale + input_zero_point), -128, 127)
+            sample = sample.astype(np.int8)
+        interpreter.set_tensor(input_details['index'], sample)
+        interpreter.invoke()
+        predictions[index] = np.argmax(interpreter.get_tensor(output_details['index'])[0])
+
+    accuracy = accuracy_score(np.asarray(y).astype(int), predictions)
+    print(f'[EVALUATION] TFLite int8 accuracy: {accuracy:.4f}')
+
+    ops = sorted({op['op_name'] for op in interpreter._get_ops_details()})
+    print(f'[EVALUATION] TFLite ops used (must be registered in the firmware): {ops}')
+    return accuracy
