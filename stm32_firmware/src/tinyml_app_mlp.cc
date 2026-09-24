@@ -304,10 +304,19 @@ void stm_timer_init()
     DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
 }
 
-int64_t stm_timer_get_time() 
+uint32_t stm_timer_get_cycles()
 {
-    uint32_t cycles = DWT->CYCCNT;
-    return ((int64_t)cycles * 1000000) / SystemCoreClock;
+    return DWT->CYCCNT;
+}
+
+// CYCCNT wraps every 2^32 cycles (~19.9 s at 216 MHz), so intervals are
+// taken as an unsigned cycle difference, which stays correct across the
+// wrap, and only then converted to microseconds.
+unsigned long stm_cycles_to_us(uint32_t start, uint32_t end)
+{
+    const uint32_t cycles = end - start;
+    return static_cast<unsigned long>(
+        (static_cast<uint64_t>(cycles) * 1000000u) / SystemCoreClock);
 }
 
 char *uart_read_line(UART_HandleTypeDef *huart, char *buffer, size_t buffer_size)
@@ -357,17 +366,18 @@ extern "C" void tinyml_app_main(void)
 
         // Measured on the device: preprocessing + inference only, with the
         // serial transfer left out.
-        const int64_t filter_start_us = stm_timer_get_time();
+        const uint32_t filter_start = stm_timer_get_cycles();
         filter_sos(beat);
-        const int64_t inference_start_us = stm_timer_get_time();
+        const uint32_t inference_start = stm_timer_get_cycles();
         const int prediction = classify(beat);
-        const int64_t end_us = stm_timer_get_time();
+        const uint32_t end = stm_timer_get_cycles();
 
-        const long long filter_us = inference_start_us - filter_start_us;
-        const long long inference_us = end_us - inference_start_us;
+        const unsigned long filter_us = stm_cycles_to_us(filter_start, inference_start);
+        const unsigned long inference_us = stm_cycles_to_us(inference_start, end);
 
-        // Machine-readable result line for the host script.
-        std::printf("RESULT,%d,%lld,%lld\n", prediction, inference_us, filter_us);
+        // Machine-readable result line for the host script. %lu, not %lld:
+        // newlib-nano's printf has no long long support.
+        std::printf("RESULT,%d,%lu,%lu\n", prediction, inference_us, filter_us);
         std::fflush(stdout);
     }
 
