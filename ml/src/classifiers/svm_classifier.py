@@ -1,7 +1,6 @@
 from pathlib import Path
 import joblib
 import numpy as np
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
@@ -10,8 +9,8 @@ import sys
 # Add the source directory so the local module imports below resolve reliably.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from load_data import build_full_dataset, classes
-from helpers import extract_neurokit_features, smoothed_class_weights
+from load_data import build_full_dataset
+from helpers import extract_neurokit_features, print_aami_report, smoothed_class_weights
 
 
 def _format_float(value):
@@ -207,19 +206,7 @@ def train_svm(x_train, y_train, C_value=1.0, gamma_value=0.0):
 def evaluate_model(model, x_test, y_test):
     print('[EVALUATION] Starting SVM evaluation...')
     predictions = model.predict(x_test)
-    print("Accuracy:", accuracy_score(y_test, predictions))
-    print("Confusion matrix:")
-    print(confusion_matrix(y_test, predictions, labels=np.arange(len(classes))))
-    print("Classification report:")
-    print(
-        classification_report(
-            y_test,
-            predictions,
-            labels=np.arange(len(classes)),
-            target_names=classes,
-            zero_division=0,
-        )
-    )
+    print_aami_report('SVM', y_test, predictions)
     print('[EVALUATION] SVM evaluation completed.')
 
 

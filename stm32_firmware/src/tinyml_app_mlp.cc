@@ -31,9 +31,9 @@ extern "C" int _write(int file, char *ptr, int len)
 namespace {
 
 constexpr int kInputSamples = 256;
-// RR intervals sent after the samples on each line, in the order of
-// RR_FEATURES in ml/src/load_data.py: pre_rr, post_rr, local_rr,
-// pre_rr_ratio (seconds / ratio).
+// RR features sent after the samples on each line, in the order of
+// RR_FEATURES in ml/src/load_data.py: pre_rr_local, post_rr_local,
+// post_pre_rr, pre_rr_long (all ratios between RR intervals).
 constexpr int kRrFeatures = 4;
 constexpr int kClassCount = 5;
 constexpr int kLineSize = 4096;

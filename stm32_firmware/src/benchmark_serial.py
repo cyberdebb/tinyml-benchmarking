@@ -30,7 +30,7 @@ results_directory = firmware_directory / 'results'
 # so the boards are always benchmarked on the same patients the models were
 # tested on.
 sys.path.insert(0, str(dataset_directory / 'src'))
-from load_data import TEST_RECORDS, dataset_cache_path, select_records  # noqa: E402
+from load_data import TEST_RECORDS, cache_is_current, dataset_cache_path, select_records  # noqa: E402
 
 # Must match the classifier configs and the pipeline dataset_config.
 dataset_config = SimpleNamespace(feature='MLII', input_size=256)
@@ -58,8 +58,8 @@ def load_test_set():
         sys.exit(1)
 
     with np.load(cache_file) as data:
-        if 'rr' not in data.files or 'records' not in data.files:
-            print('[ERROR] Dataset cache is from an older version (no RR intervals).')
+        if not cache_is_current(data):
+            print('[ERROR] Dataset cache is from an older version (other RR features or records).')
             print('[ERROR] Run the training (pipeline step 1) again to rebuild it.')
             sys.exit(1)
         X_total = data['X']
@@ -111,7 +111,7 @@ def wait_for_ready(connection, timeout=20):
 
 
 def send_beat(connection, beat, rr):
-    """Sends one beat followed by its RR intervals (load_data.RR_FEATURES)
+    """Sends one beat followed by its RR features (load_data.RR_FEATURES)
     and returns (predicted_class, inference_microseconds, filter_microseconds)."""
     payload = ','.join(f'{value:.5f}' for value in (*beat, *rr)) + '\n'
     connection.reset_input_buffer()
