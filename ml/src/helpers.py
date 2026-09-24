@@ -14,15 +14,6 @@ import pandas as pd
 from pathlib import Path
 
 
-def print_classification_summary(y_true, y_pred):
-    """Per-class results (the overall accuracy is dominated by class N)."""
-    labels = np.arange(len(classes))
-    print('Confusion matrix (rows = true N,S,V,F,Q; columns = predicted):')
-    print(confusion_matrix(y_true, y_pred, labels=labels))
-    print(classification_report(y_true, y_pred, labels=labels, target_names=classes,
-                                digits=4, zero_division=0))
-
-
 def print_results(config, model, Xval, yval, classes):
     model.load_weights(config.trained_model)
     
