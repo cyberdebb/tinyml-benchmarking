@@ -1,7 +1,7 @@
 """Sends ECG beats to the ESP32 over UART and collects the predictions.
 
 Usage:
-    python src/benchmark_serial.py COM3 <model> --beats 500
+    python src/benchmark_serial.py COM5 <model> --beats 500
 
 The firmware answers every beat with a line:
     RESULT,<predicted_class>,<inference_microseconds>
