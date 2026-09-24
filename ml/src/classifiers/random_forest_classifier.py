@@ -2,17 +2,13 @@ from pathlib import Path
 import pickle
 from types import SimpleNamespace
 import emlearn
-import numpy as np
-import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
-from sklearn.model_selection import cross_val_predict
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from load_data import build_full_dataset, classes
-from helpers import extract_neurokit_features, smoothed_class_weights
+from load_data import RR_FEATURES, build_full_dataset
+from helpers import extract_neurokit_features, print_aami_report, smoothed_class_weights
 
 # Size/accuracy tradeoff for the embedded target: RANDOM_FOREST_MODEL_BYTES
 # (random_forest_classifier.h) scales directly with the forest's total
@@ -64,30 +60,6 @@ def export_model(forest_classifier):
           f'(~{model_bytes / 1024:.1f} KB estimated).')
     print('[EXPORT] Saved Random Forest C header model.')
 
-def evaluate_classifier(confusion_matrix_values, outputs):
-    quality_measures = ["Se", "Sp", "Pp", "FPR", "Ac", "F1"]
-    quality = np.empty((len(quality_measures), len(outputs)))
-
-    for index, _ in enumerate(outputs):
-        true_positive = confusion_matrix_values[index, index]
-        false_negative = np.sum(confusion_matrix_values[index, :]) - true_positive
-        true_negative = np.sum(confusion_matrix_values) - np.sum(confusion_matrix_values[index, :])
-        false_positive = np.sum(confusion_matrix_values[:, index]) - true_positive
-
-        sensitivity_denominator = true_positive + false_negative
-        specificity_denominator = true_negative + false_positive
-        precision_denominator = true_positive + false_positive
-        f1_denominator = 2 * true_positive + false_positive + false_negative
-
-        quality[0, index] = true_positive / sensitivity_denominator
-        quality[1, index] = true_negative / specificity_denominator
-        quality[2, index] = true_positive / precision_denominator
-        quality[3, index] = false_positive / sensitivity_denominator
-        quality[4, index] = (true_positive + true_negative) / np.sum(confusion_matrix_values)
-        quality[5, index] = 2 * true_positive / f1_denominator
-
-    return pd.DataFrame(quality, columns=outputs, index=quality_measures)
-
 def main():
     print('[START] Random Forest classifier execution started.')
     config = SimpleNamespace(split=True, input_size=256, feature='MLII')
@@ -114,33 +86,15 @@ def main():
     )
     forest_classifier.fit(train_features, train_labels)
     print('[TRAIN] Random Forest training completed.')
-    print(forest_classifier.feature_importances_)
+    # 12 morphology features (helpers.beat_features) followed by RR_FEATURES.
+    feature_names = [f'morph_{index}' for index in range(12)] + list(RR_FEATURES)
+    print('[TRAIN] Feature importances:')
+    for name, importance in zip(feature_names, forest_classifier.feature_importances_):
+        print(f'  {name}: {importance:.4f}')
 
     test_predictions = forest_classifier.predict(test_features)
-    test_confusion_matrix = confusion_matrix(
-        test_labels,
-        test_predictions,
-        labels=np.arange(len(classes)),
-    )
-    print("Test confusion matrix:")
-    print(test_confusion_matrix)
-    print("Test accuracy:", accuracy_score(test_labels, test_predictions))
+    evaluation = print_aami_report('Random Forest', test_labels, test_predictions)
 
-    evaluation = evaluate_classifier(test_confusion_matrix, classes)
-    print("Evaluation details:")
-    print(evaluation)
-    print("Classification report:")
-    print(
-        classification_report(
-            test_labels,
-            test_predictions,
-            labels=np.arange(len(classes)),
-            target_names=classes,
-            digits=4,
-            zero_division=0,
-        )
-    )
-    
     model_path = Path("models/random_forest_classifier.pickle")
     model_path.parent.mkdir(parents=True, exist_ok=True)
 

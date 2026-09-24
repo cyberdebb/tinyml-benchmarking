@@ -8,7 +8,7 @@ os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 import numpy as np
 import tensorflow as tf
 import keras
-from keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau, TensorBoard
+from keras.callbacks import Callback, EarlyStopping, ModelCheckpoint, ReduceLROnPlateau, TensorBoard
 from keras.layers import (
     Activation,
     BatchNormalization,
@@ -26,7 +26,8 @@ from keras.optimizers import Adam
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from load_data import RR_FEATURES, build_full_dataset, classes
-from helpers import build_representative_dataset, evaluate_tflite, print_results, smoothed_class_weights
+from helpers import (build_representative_dataset, evaluate_tflite, macro_f1, print_results,
+                     smoothed_class_weights)
 
 
 output_directory = Path('models')
@@ -43,9 +44,10 @@ output_directory = Path('models')
 #   - 1x1 convolution shortcut instead of MaxPooling + Lambda(zeropad),
 #     which avoids custom layers and extra TFLite ops (ZEROS_LIKE, CONCATENATION)
 #   - GlobalAveragePooling1D before the classifier
-#   - a second input with the beat's RR intervals (load_data.RR_FEATURES),
-#     joined to the pooled morphology features: the waveform alone doesn't
-#     show that a beat came early, which is what separates S from N
+#   - a second input with the beat's RR features (load_data.RR_FEATURES,
+#     ratios around 1), joined to the pooled morphology features: the
+#     waveform alone doesn't show that a beat came early, which is what
+#     separates S from N
 #   - each beat is standardized (zero mean, unit variance) before the
 #     network, so amplitude differences between patients/electrodes don't
 #     dominate (normalize_beats, and the same step in tinyml_app_cnn.cc)
@@ -203,12 +205,33 @@ def prepare_inputs(dataset):
     return [beats, rr], np.asarray(dataset.y).astype(int)
 
 
-def build_training_callbacks(config):
+class ValidationMacroF1(Callback):
+    """Adds val_macro_f1 (helpers.macro_f1 over N, S, V, F) to the epoch
+    logs, so early stopping and the checkpoint keep the epoch that best
+    separates the classes on the validation patients. val_loss follows the
+    class-weighted loss, and accuracy is dominated by N (always answering N
+    already scores ~0.89). Must come before the callbacks that read it."""
+
+    def __init__(self, inputs, y):
+        super().__init__()
+        self.inputs = inputs
+        self.y = y
+
+    def on_epoch_end(self, epoch, logs=None):
+        predictions = np.argmax(self.model.predict(self.inputs, batch_size=1024, verbose=0), axis=1)
+        score = macro_f1(self.y, predictions)
+        if logs is not None:
+            logs['val_macro_f1'] = score
+        print(f'[TRAIN] Epoch {epoch + 1}: val_macro_f1 = {score:.4f}')
+
+
+def build_training_callbacks(config, validation_inputs, yval):
     return [
+        ValidationMacroF1(validation_inputs, yval),
         EarlyStopping(
-            monitor='val_loss',
+            monitor='val_macro_f1',
             patience=config.patience,
-            mode='min',
+            mode='max',
             restore_best_weights=True,
             verbose=1,
         ),
@@ -228,8 +251,8 @@ def build_training_callbacks(config):
         ),
         ModelCheckpoint(
             str(output_directory / 'cnn_classifier.keras'),
-            monitor='val_loss',
-            mode='min',
+            monitor='val_macro_f1',
+            mode='max',
             save_best_only=True,
             verbose=1,
         ),
@@ -273,7 +296,7 @@ def cnn_train(config, train, validation, test):
         validation_data=(validation_inputs, yval),
         epochs=config.epochs,
         batch_size=config.batch,
-        callbacks=build_training_callbacks(config),
+        callbacks=build_training_callbacks(config, validation_inputs, yval),
         initial_epoch=initial_epoch,
         verbose=1,
         class_weight=class_weight,

@@ -11,7 +11,6 @@ from keras import Sequential
 from keras.layers import Dense, Input
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.neural_network import MLPClassifier
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, confusion_matrix,  accuracy_score,  precision_score,  recall_score,  f1_score,  roc_curve,  auc,  precision_recall_curve
 from sklearn.preprocessing import StandardScaler, label_binarize
 import joblib
@@ -22,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from load_data import build_full_dataset, classes
 from helpers import (build_representative_dataset, evaluate_tflite, extract_neurokit_features,
-                     smoothed_class_weights)
+                     macro_f1, print_aami_report, smoothed_class_weights)
 
 
 def train_model_sklearn(x_train, y_train, x_validate, y_validate):
@@ -68,7 +67,10 @@ def train_model_sklearn(x_train, y_train, x_validate, y_validate):
     print(f'[TRAIN] Class weights: {class_weights}')
     print(f'[TRAIN] Resampled training samples: {len(balanced_indices)}')
 
-    best_validation_accuracy = -np.inf
+    # The best epoch is picked by the validation macro-F1 (N, S, V, F), not
+    # the accuracy: accuracy is dominated by N and favors an epoch that
+    # answers N for almost everything.
+    best_validation_f1 = -np.inf
     epochs_without_improvement = 0
     best_coefs = None
     best_intercepts = None
@@ -86,19 +88,16 @@ def train_model_sklearn(x_train, y_train, x_validate, y_validate):
             balanced_y_train,
             mlp_classifier.predict(balanced_x_train),
         )
-        validation_accuracy = accuracy_score(
-            y_validate,
-            mlp_classifier.predict(x_validate),
-        )
+        validation_f1 = macro_f1(y_validate, mlp_classifier.predict(x_validate))
         print(
             f'[TRAIN] Epoch {epoch + 1}/{max_epochs} - '
             f'loss: {mlp_classifier.loss_:.6f} - '
             f'train_accuracy: {train_accuracy:.4f} - '
-            f'validation_accuracy: {validation_accuracy:.4f}'
+            f'validation_macro_f1: {validation_f1:.4f}'
         )
 
-        if validation_accuracy > best_validation_accuracy:
-            best_validation_accuracy = validation_accuracy
+        if validation_f1 > best_validation_f1:
+            best_validation_f1 = validation_f1
             epochs_without_improvement = 0
             best_coefs = [weights.copy() for weights in mlp_classifier.coefs_]
             best_intercepts = [bias.copy() for bias in mlp_classifier.intercepts_]
@@ -108,7 +107,7 @@ def train_model_sklearn(x_train, y_train, x_validate, y_validate):
         if epochs_without_improvement >= early_stopping_patience:
             print(
                 f'[TRAIN] Early stopping at epoch {epoch + 1}. '
-                f'Best validation accuracy: {best_validation_accuracy:.4f}'
+                f'Best validation macro-F1: {best_validation_f1:.4f}'
             )
             break
 
@@ -129,15 +128,8 @@ def evaluate_model(classifier, x_validate, y_validate, directory):
     - y_validate (numpy.ndarray): Validation labels.
     """
     print('[EVALUATION] Starting MLP evaluation...')
+    print_aami_report('MLP (scikit-learn float model)', y_validate, classifier.predict(x_validate))
 
-    # Make predictions on the validation set
-    y_pred = classifier.predict(x_validate)
-
-    # Evaluate accuracy
-    accuracy = accuracy_score(y_validate, y_pred)
-    print('\nTest Accuracy: {:.2f}%\n'.format(accuracy * 100))
-
-    
 
 def test_model(classifier, x_test, y_test, directory):
     """

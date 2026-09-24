@@ -4,9 +4,9 @@ os.environ.setdefault('TF_ENABLE_ONEDNN_OPTS', '0')
 
 import matplotlib.pyplot as plt
 import numpy as np
-from load_data import RR_FEATURES, aami_mapping, classes, sampling_rate
+from load_data import RR_FEATURES, SCORED_CLASSES, aami_mapping, classes, sampling_rate
 from keras import models
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, confusion_matrix, f1_score
 import sys
 import matplotlib.pyplot as plt
 import numpy as np
@@ -25,8 +25,65 @@ def print_results(config, model, Xval, yval, classes):
     ytrue = np.argmax(yval, axis=1) if yval.ndim > 1 else yval.astype(int)
     ypred = np.argmax(ypred_mat, axis=1)
     
-    accuracy = accuracy_score(ytrue, ypred)
-    print(f"Accuracy: {accuracy:.4f}")
+    print_aami_report('Keras float model', ytrue, ypred)
+
+
+SCORED_CLASS_IDS = [classes.index(name) for name in SCORED_CLASSES]
+
+
+def macro_f1(y_true, y_pred):
+    """Mean F1 over SCORED_CLASSES (N, S, V, F). The metric the models are
+    compared on and the one used to pick the best epoch/checkpoint: accuracy
+    is dominated by N (always answering N already scores ~0.89 on DS2)."""
+    return f1_score(np.asarray(y_true).astype(int), np.asarray(y_pred).astype(int),
+                    labels=SCORED_CLASS_IDS, average='macro', zero_division=0)
+
+
+def print_aami_report(name, y_true, y_pred):
+    """Prints the test metrics every classifier reports, and returns them as
+    a DataFrame (one row per class).
+
+    Per class, one-vs-rest from the confusion matrix (the AAMI EC57 / de
+    Chazal metrics):
+      Se  (sensitivity, recall)  = TP / (TP + FN)
+      +P  (positive predictivity) = TP / (TP + FP)
+      FPR (false positive rate)   = FP / (FP + TN)
+      F1                          = 2TP / (2TP + FP + FN)
+    plus the accuracy, the accuracy of always answering N (the baseline the
+    accuracy has to beat) and the macro-F1 over SCORED_CLASSES.
+    """
+    y_true = np.asarray(y_true).astype(int)
+    y_pred = np.asarray(y_pred).astype(int)
+    matrix = confusion_matrix(y_true, y_pred, labels=np.arange(len(classes)))
+    total = matrix.sum()
+
+    rows = {'Se': [], '+P': [], 'FPR': [], 'F1': [], 'Support': []}
+    for index in range(len(classes)):
+        true_positive = matrix[index, index]
+        false_negative = matrix[index, :].sum() - true_positive
+        false_positive = matrix[:, index].sum() - true_positive
+        true_negative = total - true_positive - false_negative - false_positive
+
+        def ratio(numerator, denominator):
+            return numerator / denominator if denominator else float('nan')
+
+        rows['Se'].append(ratio(true_positive, true_positive + false_negative))
+        rows['+P'].append(ratio(true_positive, true_positive + false_positive))
+        rows['FPR'].append(ratio(false_positive, false_positive + true_negative))
+        rows['F1'].append(ratio(2 * true_positive, 2 * true_positive + false_positive + false_negative))
+        rows['Support'].append(int(matrix[index, :].sum()))
+    report = pd.DataFrame(rows, index=classes)
+
+    accuracy = accuracy_score(y_true, y_pred)
+    always_normal = np.mean(y_true == classes.index('N'))
+    print(f'[EVALUATION] {name} -- test set ({len(y_true)} beats)')
+    print('Confusion matrix (rows = true, columns = predicted: '
+          f'{", ".join(classes)}):')
+    print(matrix)
+    print(report.to_string(float_format='{:.4f}'.format))
+    print(f'Accuracy: {accuracy:.4f} (always predicting N: {always_normal:.4f})')
+    print(f'Macro-F1 ({", ".join(SCORED_CLASSES)}): {macro_f1(y_true, y_pred):.4f}')
+    return report
 
 
 def plot_beat(beat_array, class_id=None):
@@ -143,6 +200,13 @@ def extract_neurokit_features(signals, rr, labels):
 
 
 
+# Classes with fewer training beats than this are not upweighted (weight
+# 1.0). Without the paced records, Q has only a handful of beats: a weight
+# of ~70 would make the models learn those few beats by heart and call many
+# normal beats Q. There aren't enough of them to learn the class anyway.
+MIN_UPWEIGHTED_CLASS_BEATS = 100
+
+
 def smoothed_class_weights(y):
     """Class weights shared by the four models: sqrt(n_largest / n_class).
 
@@ -150,9 +214,11 @@ def smoothed_class_weights(y):
     in the hundreds, and the models then call many normal beats S/F/Q (on
     the inter-patient test, accuracy fell below always predicting N). The
     square root still favors the rare classes, just less aggressively.
+    Classes below MIN_UPWEIGHTED_CLASS_BEATS keep weight 1.0.
     """
     class_ids, counts = np.unique(np.asarray(y).astype(int), return_counts=True)
-    return {int(c): float(np.sqrt(counts.max() / n)) for c, n in zip(class_ids, counts)}
+    return {int(c): float(np.sqrt(counts.max() / n)) if n >= MIN_UPWEIGHTED_CLASS_BEATS else 1.0
+            for c, n in zip(class_ids, counts)}
 
 
 def build_representative_dataset(inputs, n_samples=500, seed=1):
@@ -179,9 +245,10 @@ def build_representative_dataset(inputs, n_samples=500, seed=1):
 
 def evaluate_tflite(tflite_path, inputs, y):
     """Runs the quantized model on the given inputs (one array per model
-    input) to check the accuracy after quantization (this is what actually
-    runs on the boards). Each TFLite input is matched to the array with the
-    same number of values per sample, like the firmware does."""
+    input) to check the metrics after quantization (this is what actually
+    runs on the boards) and returns its predictions. Each TFLite input is
+    matched to the array with the same number of values per sample, like
+    the firmware does."""
     import tensorflow as tf
 
     print('[EVALUATION] Evaluating quantized TFLite model...')
@@ -206,9 +273,8 @@ def evaluate_tflite(tflite_path, inputs, y):
         interpreter.invoke()
         predictions[index] = np.argmax(interpreter.get_tensor(output_details['index'])[0])
 
-    accuracy = accuracy_score(np.asarray(y).astype(int), predictions)
-    print(f'[EVALUATION] TFLite int8 accuracy: {accuracy:.4f}')
+    print_aami_report('TFLite int8 model', y, predictions)
 
     ops = sorted({op['op_name'] for op in interpreter._get_ops_details()})
     print(f'[EVALUATION] TFLite ops used (must be registered in the firmware): {ops}')
-    return accuracy
+    return predictions

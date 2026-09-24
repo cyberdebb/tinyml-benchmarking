@@ -28,11 +28,17 @@ sampling_rate = 360
 #     conjunto das metricas finais e do benchmark nas placas
 #     (benchmark_serial.py).
 #
-# Registros com marcapasso: a AAMI recomenda deixa-los de fora, mas no
-# mapeamento abaixo os batimentos de marcapasso ('/', 'f') sao a classe Q, e
-# sem eles a Q fica com poucas dezenas de batimentos. Por isso os dois
-# registros com marcapasso que tem MLII entram, um de cada lado: 217 no
-# treino e 107 no teste (102 e 104 nao tem MLII).
+# Registros com marcapasso (102, 104, 107, 217): a AAMI (EC57) e de Chazal
+# os deixam de fora, e INCLUDE_PACED_RECORDS = False segue esse protocolo,
+# para que os resultados sejam comparaveis com a literatura. Sem eles, a
+# classe Q fica so com os poucos batimentos 'Q' dos outros registros: nao da
+# para aprender nem avaliar Q, e as metricas principais sao as de N, S, V e F
+# (SCORED_CLASSES). Com True, os dois registros com marcapasso que tem MLII
+# entram, um de cada lado (217 no treino, 107 no teste; 102 e 104 nao tem
+# MLII) -- mas ai a classe Q inteira vem de um unico paciente em cada
+# conjunto, entao o resultado de Q mede so o quanto o 107 se parece com o 217.
+INCLUDE_PACED_RECORDS = False
+
 DS1_RECORDS = (
     '101', '106', '108', '109', '112', '114', '115', '116', '118', '119', '122',
     '124', '201', '203', '205', '207', '208', '209', '215', '220', '223', '230',
@@ -49,22 +55,48 @@ DS2_RECORDS = (
 VALIDATION_RECORDS = ('118', '124', '205', '223')
 PACED_TRAIN_RECORDS = ('217',)
 PACED_TEST_RECORDS = ('107',)
-TRAIN_RECORDS = tuple(r for r in DS1_RECORDS if r not in VALIDATION_RECORDS) + PACED_TRAIN_RECORDS
-TEST_RECORDS = DS2_RECORDS + PACED_TEST_RECORDS
-ALL_RECORDS = DS1_RECORDS + PACED_TRAIN_RECORDS + TEST_RECORDS
+TRAIN_RECORDS = tuple(r for r in DS1_RECORDS if r not in VALIDATION_RECORDS) + (
+    PACED_TRAIN_RECORDS if INCLUDE_PACED_RECORDS else ())
+TEST_RECORDS = DS2_RECORDS + (PACED_TEST_RECORDS if INCLUDE_PACED_RECORDS else ())
+# O cache sempre guarda todos os registros (com os de marcapasso); os
+# conjuntos acima so escolhem quais usar, entao mudar INCLUDE_PACED_RECORDS
+# nao obriga a reconstruir o cache.
+ALL_RECORDS = DS1_RECORDS + PACED_TRAIN_RECORDS + DS2_RECORDS + PACED_TEST_RECORDS
 
-# Intervalos RR de cada batimento, em segundos, calculados a partir dos picos R
-# anotados (os mesmos que centralizam a janela do batimento). A forma de onda
-# sozinha nao mostra que um batimento veio adiantado, que e o que mais separa
-# S (e ajuda V/F) de N. O host envia esses valores junto com cada batimento
+# Features de RR de cada batimento, a partir dos picos R anotados (os mesmos
+# que centralizam a janela do batimento). A forma de onda sozinha nao mostra
+# que um batimento veio adiantado, que e o que mais separa S (e ajuda V/F) de
+# N. O host envia esses valores junto com cada batimento
 # (benchmark_serial.py); o firmware nao calcula RR.
-#   pre_rr:       R atual - R anterior
-#   post_rr:      R seguinte - R atual
-#   local_rr:     media dos ultimos RR_LOCAL_BEATS intervalos pre_rr (ritmo
-#                 do proprio paciente)
-#   pre_rr_ratio: pre_rr / local_rr (prematuridade independente do paciente)
-RR_FEATURES = ('pre_rr', 'post_rr', 'local_rr', 'pre_rr_ratio')
+#
+# Todas sao razoes, nao intervalos em segundos: o RR absoluto depende da
+# frequencia cardiaca de cada paciente, e no split inter-paciente o modelo
+# acaba aprendendo o ritmo dos pacientes do treino em vez da prematuridade.
+# As medias usam so os intervalos ANTERIORES ao batimento (causal, como seria
+# em tempo real, e sem que um batimento prematuro puxe a propria referencia):
+#   local_rr: media dos ultimos RR_LOCAL_BEATS intervalos (ritmo recente)
+#   long_rr:  media dos ultimos RR_LONG_BEATS intervalos (~5 min, ritmo de
+#             base do paciente)
+# e as features sao:
+#   pre_rr_local:  pre_rr / local_rr  (prematuridade)
+#   post_rr_local: post_rr / local_rr (pausa depois do batimento)
+#   post_pre_rr:   post_rr / pre_rr   (pausa compensatoria)
+#   pre_rr_long:   pre_rr / long_rr   (prematuridade em relacao ao ritmo de
+#                  base, robusta quando os ultimos batimentos tambem foram
+#                  ectopicos, como em bigeminismo)
+# onde pre_rr = R atual - R anterior e post_rr = R seguinte - R atual.
+RR_FEATURES = ('pre_rr_local', 'post_rr_local', 'post_pre_rr', 'pre_rr_long')
 RR_LOCAL_BEATS = 10
+RR_LONG_BEATS = 300
+
+# Classes em que os modelos sao comparados (macro-F1, escolha do checkpoint).
+# Q fica de fora: sem os registros com marcapasso quase nao ha Q, e com eles
+# Q vem de um unico paciente em cada conjunto (ver INCLUDE_PACED_RECORDS).
+SCORED_CLASSES = ('N', 'S', 'V', 'F')
+
+# Versao do formato do cache: aumentar sempre que o que e salvo nele mudar
+# (janelas, RR_FEATURES, registros), para que caches antigos sejam refeitos.
+DATASET_CACHE_VERSION = 2
 
 # 1. Filtro Causal (Pronto para o Edge AI / ESP32)
 #
@@ -173,11 +205,8 @@ def load_and_segment_record(record_name, config):
             # Ainda descarta janelas degeneradas (linha reta / sensor
             # travado), que não são um batimento válido de qualquer jeito.
             if beat_window.max() - beat_window.min() > 0:
-                pre_rr = pre_rr_all[i]
-                post_rr = pre_rr_all[i + 1]
-                local_rr = np.mean(pre_rr_all[max(1, i - RR_LOCAL_BEATS + 1):i + 1])
                 X.append(beat_window)
-                rr.append((pre_rr, post_rr, local_rr, pre_rr / local_rr))
+                rr.append(rr_features(pre_rr_all, i))
                 y.append(aami_mapping[symbol])
 
     X = np.asarray(X)
@@ -187,9 +216,30 @@ def load_and_segment_record(record_name, config):
     return X, rr, y
 
 
+def rr_features(pre_rr_all, i):
+    """RR_FEATURES of beat i. pre_rr_all[j] is the interval (s) between beat
+    j-1 and beat j (pre_rr_all[0] is NaN). The local and long averages use
+    only the intervals before beat i; for the first beats of a record, with
+    no earlier interval, pre_rr itself is the reference (ratios of 1)."""
+    pre_rr = pre_rr_all[i]
+    post_rr = pre_rr_all[i + 1]
+    previous = pre_rr_all[1:i]
+    local_rr = np.mean(previous[-RR_LOCAL_BEATS:]) if len(previous) else pre_rr
+    long_rr = np.mean(previous[-RR_LONG_BEATS:]) if len(previous) else pre_rr
+    return (pre_rr / local_rr, post_rr / local_rr, post_rr / pre_rr, pre_rr / long_rr)
+
+
 # 3.1 Cache local do dataset já processado (janelas extraídas de todos os registros)
 def dataset_cache_path(feature, input_size):
     return cache_directory / f'dataset_{feature}_{input_size}.npz'
+
+
+def cache_is_current(cached):
+    """True if an opened dataset cache (np.load) was written by this version
+    of the code: same DATASET_CACHE_VERSION and the same records."""
+    return ('version' in cached.files
+            and int(cached['version']) == DATASET_CACHE_VERSION
+            and set(np.unique(cached['records'])) == {int(r) for r in ALL_RECORDS})
 
 
 def load_cached_dataset(config):
@@ -200,14 +250,13 @@ def load_cached_dataset(config):
     if cache_path.exists():
         print(f'[CACHE] Loading cached raw dataset from {cache_path}...')
         with np.load(cache_path) as cached:
-            if 'rr' in cached.files and 'records' in cached.files and (
-                    set(np.unique(cached['records'])) == {int(r) for r in ALL_RECORDS}):
+            if cache_is_current(cached):
                 X_total, rr_total = cached['X'], cached['rr']
                 y_total, records = cached['y'], cached['records']
                 print(f'[CACHE] Loaded cached dataset: X={X_total.shape}, y={y_total.shape}')
                 return X_total, rr_total, y_total, records
-        # Caches from an older version (no RR intervals / record ids, or a
-        # different set of records) are rebuilt from the local MIT-BIH files.
+        # Caches from an older version (other RR features, no record ids, or
+        # a different set of records) are rebuilt from the local MIT-BIH files.
         print('[CACHE] Cached dataset is from an older version, rebuilding it...')
 
     records_to_load = ALL_RECORDS
@@ -249,7 +298,8 @@ def load_cached_dataset(config):
     # sinal que receberia em um deployment real (ECG cru de um ADC), e é ele
     # mesmo quem filtra antes de inferir.
     cache_directory.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(cache_path, X=X_total, rr=rr_total, y=y_total, records=records)
+    np.savez_compressed(cache_path, X=X_total, rr=rr_total, y=y_total, records=records,
+                        version=DATASET_CACHE_VERSION)
     print(f'[CACHE] Saved raw dataset to {cache_path}.')
     return X_total, rr_total, y_total, records
 
@@ -286,7 +336,9 @@ def build_full_dataset(config):
 
     # 3. Usa a config para decidir se faz o split ou não
     if config.split:
-        print('[SPLIT] Splitting dataset by patient (inter-patient, de Chazal DS1/DS2)...')
+        paced = 'with' if INCLUDE_PACED_RECORDS else 'without'
+        print(f'[SPLIT] Splitting dataset by patient (inter-patient, de Chazal DS1/DS2, '
+              f'{paced} paced records)...')
         train = make_set('Training (DS1)', select_records(records, TRAIN_RECORDS))
         validation = make_set('Validation (DS1)', select_records(records, VALIDATION_RECORDS))
         test = make_set('Test (DS2)', select_records(records, TEST_RECORDS))
