@@ -85,6 +85,32 @@ def numeric_value(values, default=0.0):
     return float(numeric_values[-1]) if len(numeric_values) else default
 
 
+# Shape features: the standardized beat (normalize_beats) sampled every
+# SHAPE_STEP samples of the 0.6 s feature window (216 samples at 360 Hz ->
+# 24 points, one every 25 ms). The 12 statistics of beat_features() barely
+# describe the waveform, e.g. the pacing spike of class Q or the wide QRS of
+# V. Must match kShapeStep / kShapeFeatures in tinyml_app_{mlp,rf,svm}.cc.
+FEATURE_WINDOW = 216
+SHAPE_STEP = 9
+
+
+def normalize_beats(X):
+    """Standardizes each beat (over its 256 samples) to zero mean and unit
+    variance, so amplitude differences between patients/electrodes don't
+    dominate. Must match normalize_beat() in tinyml_app_cnn.cc and the shape
+    features in extract_features() of tinyml_app_{mlp,rf,svm}.cc."""
+    X = np.asarray(X, dtype=np.float32)
+    mean = X.mean(axis=1, keepdims=True)
+    std = X.std(axis=1, keepdims=True)
+    return (X - mean) / (std + 1e-6)
+
+
+def shape_features(signals):
+    signals = np.asarray(signals, dtype=np.float32)
+    start = (signals.shape[1] - FEATURE_WINDOW) // 2
+    return normalize_beats(signals)[:, start:start + FEATURE_WINDOW:SHAPE_STEP]
+
+
 def beat_features(processed_signal, beat_time):
     # 0.6 s around the R peak (216 samples at 360 Hz): P wave, QRS and most
     # of the T wave. Must match kFeatureWindow in tinyml_app_{mlp,rf,svm}.cc.
@@ -118,9 +144,9 @@ def beat_features(processed_signal, beat_time):
 
 
 def extract_neurokit_features(signals, rr, labels):
-    """12 morphology features per beat (beat_features) followed by its RR
-    intervals (load_data.RR_FEATURES). Same order as extract_features() +
-    the RR values in tinyml_app_{mlp,rf,svm}.cc."""
+    """Per beat: 12 statistics (beat_features), 24 shape points
+    (shape_features) and its RR features (load_data.RR_FEATURES). Same order
+    as extract_features() + the RR values in tinyml_app_{mlp,rf,svm}.cc."""
     feature_rows = []
     total_signals = len(signals)
 
@@ -143,6 +169,7 @@ def extract_neurokit_features(signals, rr, labels):
 
     features = np.hstack([
         np.asarray(feature_rows, dtype=np.float32).reshape(len(signals), -1),
+        shape_features(signals).reshape(len(signals), -1),
         np.asarray(rr, dtype=np.float32).reshape(len(signals), len(RR_FEATURES)),
     ])
     labels = np.asarray(labels)

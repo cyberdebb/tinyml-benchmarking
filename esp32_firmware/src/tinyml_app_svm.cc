@@ -22,9 +22,9 @@ namespace {
 
 constexpr char TAG[] = "tinyml";
 constexpr int kInputSamples = 256;
-// RR intervals sent after the samples on each line, in the order of
-// RR_FEATURES in ml/src/load_data.py: pre_rr, post_rr, local_rr,
-// pre_rr_ratio (seconds / ratio).
+// RR interval ratios sent after the samples on each line, in the order of
+// RR_FEATURES in ml/src/load_data.py: pre_rr_ratio, post_rr_ratio,
+// pre_post_ratio, local_rr_ratio.
 constexpr int kRrFeatures = 4;
 constexpr int kClassCount = 5;
 constexpr int kLineSize = 4096;
@@ -60,13 +60,19 @@ void filter_sos(float *signal)
     }
 }
 
-constexpr int kMorphologyFeatures = 12;
-// Morphology features + RR values, same order as
-// extract_neurokit_features() in ml/src/helpers.py.
-constexpr int kFeatureCount = kMorphologyFeatures + kRrFeatures;
 // 0.6 s around the R peak at 360 Hz (P wave, QRS and most of the T wave).
 // Must match beat_features() in ml/src/helpers.py.
 constexpr int kFeatureWindow = 216;
+constexpr int kStatFeatures = 12;
+// Shape: the beat standardized over its 256 samples, sampled every
+// kShapeStep samples of the feature window (SHAPE_STEP and
+// shape_features() in ml/src/helpers.py).
+constexpr int kShapeStep = 9;
+constexpr int kShapeFeatures = kFeatureWindow / kShapeStep;
+constexpr int kMorphologyFeatures = kStatFeatures + kShapeFeatures;
+// Statistics + shape + RR values, same order as
+// extract_neurokit_features() in ml/src/helpers.py.
+constexpr int kFeatureCount = kMorphologyFeatures + kRrFeatures;
 
 void extract_features(const float *signal, float *features)
 {
@@ -129,6 +135,24 @@ void extract_features(const float *signal, float *features)
     features[9] = percentile(0.1f);
     features[10] = percentile(0.9f);
     features[11] = static_cast<float>(maximum_index) / kFeatureWindow;
+
+    // Shape features, like normalize_beats() + shape_features() in
+    // ml/src/helpers.py: mean and standard deviation over the whole beat.
+    float beat_sum = 0.0f;
+    for (int i = 0; i < kInputSamples; ++i) {
+        beat_sum += signal[i];
+    }
+    const float beat_mean = beat_sum / kInputSamples;
+    float beat_variance = 0.0f;
+    for (int i = 0; i < kInputSamples; ++i) {
+        const float delta = signal[i] - beat_mean;
+        beat_variance += delta * delta;
+    }
+    const float beat_std = std::sqrt(beat_variance / kInputSamples);
+    for (int i = 0; i < kShapeFeatures; ++i) {
+        features[kStatFeatures + i] =
+            (signal[start + i * kShapeStep] - beat_mean) / (beat_std + 1e-6f);
+    }
 }
 
 bool init_model()

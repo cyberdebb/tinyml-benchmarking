@@ -53,18 +53,26 @@ TRAIN_RECORDS = tuple(r for r in DS1_RECORDS if r not in VALIDATION_RECORDS) + P
 TEST_RECORDS = DS2_RECORDS + PACED_TEST_RECORDS
 ALL_RECORDS = DS1_RECORDS + PACED_TRAIN_RECORDS + TEST_RECORDS
 
-# Intervalos RR de cada batimento, em segundos, calculados a partir dos picos R
-# anotados (os mesmos que centralizam a janela do batimento). A forma de onda
-# sozinha nao mostra que um batimento veio adiantado, que e o que mais separa
-# S (e ajuda V/F) de N. O host envia esses valores junto com cada batimento
+# Intervalos RR de cada batimento, calculados a partir dos picos R anotados
+# (os mesmos que centralizam a janela do batimento). A forma de onda sozinha
+# nao mostra que um batimento veio adiantado, que e o que mais separa S (e
+# ajuda V/F) de N. O host envia esses valores junto com cada batimento
 # (benchmark_serial.py); o firmware nao calcula RR.
-#   pre_rr:       R atual - R anterior
-#   post_rr:      R seguinte - R atual
-#   local_rr:     media dos ultimos RR_LOCAL_BEATS intervalos pre_rr (ritmo
-#                 do proprio paciente)
-#   pre_rr_ratio: pre_rr / local_rr (prematuridade independente do paciente)
-RR_FEATURES = ('pre_rr', 'post_rr', 'local_rr', 'pre_rr_ratio')
+#
+# Todos sao razoes, nao segundos: com RR absoluto o modelo aprende a
+# frequencia cardiaca de cada paciente do treino, o que nao vale para um
+# paciente novo (a classe S do teste vem quase toda do registro 232, com
+# ritmo bem mais lento que o do treino). Com pre_rr = R atual - R anterior,
+# post_rr = R seguinte - R atual, local_rr = media dos ultimos
+# RR_LOCAL_BEATS intervalos e long_rr = media dos ultimos RR_LONG_BEATS
+# (~5 min, o ritmo de base do paciente):
+#   pre_rr_ratio:   pre_rr / local_rr   (batimento adiantado)
+#   post_rr_ratio:  post_rr / local_rr  (pausa depois dele)
+#   pre_post_ratio: pre_rr / post_rr    (adiantado + pausa compensatoria)
+#   local_rr_ratio: local_rr / long_rr  (ritmo atual vs. ritmo de base)
+RR_FEATURES = ('pre_rr_ratio', 'post_rr_ratio', 'pre_post_ratio', 'local_rr_ratio')
 RR_LOCAL_BEATS = 10
+RR_LONG_BEATS = 300
 
 # 1. Filtro Causal (Pronto para o Edge AI / ESP32)
 #
@@ -176,8 +184,10 @@ def load_and_segment_record(record_name, config):
                 pre_rr = pre_rr_all[i]
                 post_rr = pre_rr_all[i + 1]
                 local_rr = np.mean(pre_rr_all[max(1, i - RR_LOCAL_BEATS + 1):i + 1])
+                long_rr = np.mean(pre_rr_all[max(1, i - RR_LONG_BEATS + 1):i + 1])
                 X.append(beat_window)
-                rr.append((pre_rr, post_rr, local_rr, pre_rr / local_rr))
+                rr.append((pre_rr / local_rr, post_rr / local_rr, pre_rr / post_rr,
+                           local_rr / long_rr))
                 y.append(aami_mapping[symbol])
 
     X = np.asarray(X)
@@ -200,14 +210,15 @@ def load_cached_dataset(config):
     if cache_path.exists():
         print(f'[CACHE] Loading cached raw dataset from {cache_path}...')
         with np.load(cache_path) as cached:
-            if 'rr' in cached.files and 'records' in cached.files and (
+            if 'rr_features' in cached.files and (
+                    tuple(cached['rr_features']) == RR_FEATURES) and (
                     set(np.unique(cached['records'])) == {int(r) for r in ALL_RECORDS}):
                 X_total, rr_total = cached['X'], cached['rr']
                 y_total, records = cached['y'], cached['records']
                 print(f'[CACHE] Loaded cached dataset: X={X_total.shape}, y={y_total.shape}')
                 return X_total, rr_total, y_total, records
-        # Caches from an older version (no RR intervals / record ids, or a
-        # different set of records) are rebuilt from the local MIT-BIH files.
+        # Caches from an older version (other RR features, no record ids, or
+        # a different set of records) are rebuilt from the local MIT-BIH files.
         print('[CACHE] Cached dataset is from an older version, rebuilding it...')
 
     records_to_load = ALL_RECORDS
@@ -249,7 +260,8 @@ def load_cached_dataset(config):
     # sinal que receberia em um deployment real (ECG cru de um ADC), e é ele
     # mesmo quem filtra antes de inferir.
     cache_directory.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(cache_path, X=X_total, rr=rr_total, y=y_total, records=records)
+    np.savez_compressed(cache_path, X=X_total, rr=rr_total, y=y_total, records=records,
+                        rr_features=np.array(RR_FEATURES))
     print(f'[CACHE] Saved raw dataset to {cache_path}.')
     return X_total, rr_total, y_total, records
 

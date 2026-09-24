@@ -26,7 +26,8 @@ from keras.optimizers import Adam
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from load_data import RR_FEATURES, build_full_dataset, classes
-from helpers import build_representative_dataset, evaluate_tflite, print_results, smoothed_class_weights
+from helpers import (build_representative_dataset, evaluate_tflite, normalize_beats, print_results,
+                     smoothed_class_weights)
 
 
 output_directory = Path('models')
@@ -184,15 +185,6 @@ def export_model(model, train_inputs):
 # ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
-
-def normalize_beats(X):
-    """Standardizes each beat to zero mean and unit variance. Must match
-    normalize_beat() in tinyml_app_cnn.cc."""
-    X = np.asarray(X, dtype=np.float32)
-    mean = X.mean(axis=1, keepdims=True)
-    std = X.std(axis=1, keepdims=True)
-    return (X - mean) / (std + 1e-6)
-
 
 def prepare_inputs(dataset):
     """Model inputs ([beats, rr], in the model's input order) and labels."""
