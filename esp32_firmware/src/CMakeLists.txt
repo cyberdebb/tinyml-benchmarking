@@ -33,7 +33,6 @@ idf_component_register(
         "${model_source}"
     INCLUDE_DIRS
         "."
-        "${CMAKE_CURRENT_LIST_DIR}/../../ml/models"
     REQUIRES
         espressif__esp-tflite-micro
         esp_driver_uart
