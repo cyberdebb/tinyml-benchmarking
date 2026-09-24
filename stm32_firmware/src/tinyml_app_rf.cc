@@ -150,7 +150,15 @@ bool parse_beat(char *line, float *beat)
 {
     char *token = std::strtok(line, ", \r\n");
     for (int i = 0; i < kInputSamples; ++i) {
-        if (token == nullptr || std::sscanf(token, "%f", &beat[i]) != 1) {
+        // strtof instead of sscanf("%f"): newlib-nano leaves float support
+        // out of scanf unless linked with -u _scanf_float, so sscanf
+        // would silently convert nothing.
+        char *end = nullptr;
+        if (token == nullptr) {
+            return false;
+        }
+        beat[i] = std::strtof(token, &end);
+        if (end == token) {
             return false;
         }
         token = std::strtok(nullptr, ", \r\n");
