@@ -12,7 +12,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from load_data import build_full_dataset, classes
-from helpers import extract_neurokit_features
+from helpers import extract_neurokit_features, smoothed_class_weights
 
 # Size/accuracy tradeoff for the embedded target: RANDOM_FOREST_MODEL_BYTES
 # (random_forest_classifier.h) scales directly with the forest's total
@@ -96,11 +96,11 @@ def main():
     # The validation set (patients held out of DS1) is only used by the
     # models with early stopping (CNN, MLP); RF trains on the same training
     # patients and is evaluated on the same test patients (DS2).
-    train_features, train_labels, _, _, test_features, test_labels = build_full_dataset(config)
-    print(f'[DATA] Training windows shape: {train_features.shape}')
-    print(f'[DATA] Test windows shape: {test_features.shape}')
-    train_features, train_labels = extract_neurokit_features(train_features, train_labels)
-    test_features, test_labels = extract_neurokit_features(test_features, test_labels)
+    train, _, test = build_full_dataset(config)
+    print(f'[DATA] Training windows shape: {train.X.shape}')
+    print(f'[DATA] Test windows shape: {test.X.shape}')
+    train_features, train_labels = extract_neurokit_features(train.X, train.rr, train.y)
+    test_features, test_labels = extract_neurokit_features(test.X, test.rr, test.y)
 
     print("Training model...")
     forest_classifier = RandomForestClassifier(
@@ -108,7 +108,7 @@ def main():
         max_depth=RF_MAX_DEPTH,
         min_samples_leaf=RF_MIN_SAMPLES_LEAF,
         max_features='sqrt',
-        class_weight='balanced',
+        class_weight=smoothed_class_weights(train_labels),
         random_state=42,
         verbose=1,
     )

@@ -11,7 +11,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from load_data import build_full_dataset, classes
-from helpers import extract_neurokit_features
+from helpers import extract_neurokit_features, smoothed_class_weights
 
 
 def _format_float(value):
@@ -185,16 +185,14 @@ def train_svm(x_train, y_train, C_value=1.0, gamma_value=0.0):
     print(f'[TRAIN] Training features shape: {x_train.shape}')
     print(f'[TRAIN] Training labels shape: {y_train.shape}')
     gamma = "scale" if gamma_value == 0.0 else gamma_value
-    # Same class imbalance treatment as the CNN and the RF ('balanced'
-    # weights, inversely proportional to class frequency); the MLP gets the
-    # equivalent by oversampling each class to the same size.
+    # Same class weights as the other models (helpers.smoothed_class_weights).
     model = make_pipeline(
         StandardScaler(),
         SVC(
             C=C_value,
             gamma=gamma,
             kernel="rbf",
-            class_weight="balanced",
+            class_weight=smoothed_class_weights(y_train),
             decision_function_shape="ovo",
             probability=False,
             max_iter=10000,
@@ -241,11 +239,11 @@ def main(C_value=1.0, gamma_value=0.0):
     # The validation set (patients held out of DS1) is only used by the
     # models with early stopping (CNN, MLP); SVM trains on the same training
     # patients and is evaluated on the same test patients (DS2).
-    x_train, y_train, _, _, x_test, y_test = build_full_dataset(config)
-    print(f'[DATA] Training windows shape: {x_train.shape}')
-    print(f'[DATA] Test windows shape: {x_test.shape}')
-    x_train, y_train = extract_neurokit_features(x_train, y_train)
-    x_test, y_test = extract_neurokit_features(x_test, y_test)
+    train, _, test = build_full_dataset(config)
+    print(f'[DATA] Training windows shape: {train.X.shape}')
+    print(f'[DATA] Test windows shape: {test.X.shape}')
+    x_train, y_train = extract_neurokit_features(train.X, train.rr, train.y)
+    x_test, y_test = extract_neurokit_features(test.X, test.rr, test.y)
 
     print("Training SVM...")
     model = train_svm(x_train, y_train, C_value, gamma_value)
