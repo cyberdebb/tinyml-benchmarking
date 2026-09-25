@@ -248,13 +248,6 @@ def format_duration(seconds):
 
 
 def main():
-    # With the output piped (e.g. '| Tee-Object'), Windows uses its ANSI code
-    # page (cp1252) for stdout, and a garbled byte from the board ('\ufffd')
-    # would crash print(): replace what can't be encoded instead. Piped
-    # stdout is also block-buffered: line_buffering keeps the progress live.
-    # (No need to pipe it: the summary is saved to results/<model>_report.txt.)
-    sys.stdout.reconfigure(errors='replace', line_buffering=True)
-
     parser = argparse.ArgumentParser(description='Benchmark a model running on the ESP32.')
     parser.add_argument('port', help='Serial port, e.g. COM3 or /dev/ttyUSB0')
     parser.add_argument('model', choices=('cnn', 'mlp', 'rf', 'svm'),
