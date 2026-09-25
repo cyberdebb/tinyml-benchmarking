@@ -150,18 +150,68 @@ def extract_neurokit_features(signals, rr, labels):
 MIN_UPWEIGHTED_CLASS_BEATS = 100
 
 
-def smoothed_class_weights(y):
-    """Class weights shared by the four models: sqrt(n_largest / n_class).
+def smoothed_class_weights(y, power=0.5):
+    """Class weights shared by the four models: (n_largest / n_class) ** power,
+    by default the square root.
 
-    'balanced' weights (n_largest / n_class) give the rarest classes weights
-    in the hundreds, and the models then call many normal beats S/F/Q (on
-    the inter-patient test, accuracy fell below always predicting N). The
-    square root still favors the rare classes, just less aggressively.
+    'balanced' weights (power 1) give the rarest classes weights in the
+    hundreds, and the models then call many normal beats S/F/Q (on the
+    inter-patient test, accuracy fell below always predicting N). The square
+    root still favors the rare classes, just less aggressively. The RF
+    search (random_forest_classifier.py) also tries other powers.
     Classes below MIN_UPWEIGHTED_CLASS_BEATS keep weight 1.0.
     """
     class_ids, counts = np.unique(np.asarray(y).astype(int), return_counts=True)
-    return {int(c): float(np.sqrt(counts.max() / n)) if n >= MIN_UPWEIGHTED_CLASS_BEATS else 1.0
+    return {int(c): float((counts.max() / n) ** power) if n >= MIN_UPWEIGHTED_CLASS_BEATS else 1.0
             for c, n in zip(class_ids, counts)}
+
+
+# Hyperparameter search of the classical models (SVM, RF). Every
+# configuration is trained on the training patients and scored by the
+# macro-F1 (N, S, V, F) on the validation patients: the same patients the
+# MLP and the CNN use to pick their best epoch, so the four models get the
+# same kind of tuning, and the test set (DS2) is never looked at.
+#
+# The models run on microcontrollers, so size counts too:
+#   - configurations bigger than EDGE_MODEL_BUDGET_BYTES are left out. The
+#     budget is about the size of the int8 CNN (188 KB), far below the flash
+#     of both boards (8 MB ESP32-S3, 2 MB STM32F767), so it only rules out
+#     models that are big for no reason;
+#   - among the configurations within SEARCH_F1_TOLERANCE of the best
+#     validation macro-F1, the SMALLEST one is kept (less flash, and for the
+#     SVM also less RAM and inference time). Differences that small are
+#     noise: the validation patients have ~200 S and ~30 F beats.
+EDGE_MODEL_BUDGET_BYTES = 200 * 1024
+SEARCH_F1_TOLERANCE = 0.01
+
+
+def select_compact_model(name, results):
+    """results: one dict per configuration, with 'config' (dict),
+    'val_macro_f1' and 'model_bytes'. Prints them all and returns the one
+    chosen by the rule above."""
+    within_budget = [r for r in results if r['model_bytes'] <= EDGE_MODEL_BUDGET_BYTES]
+    if not within_budget:
+        raise ValueError(f'No {name} configuration fits in {EDGE_MODEL_BUDGET_BYTES} bytes.')
+    best_f1 = max(r['val_macro_f1'] for r in within_budget)
+    candidates = [r for r in within_budget if r['val_macro_f1'] >= best_f1 - SEARCH_F1_TOLERANCE]
+    chosen = min(candidates, key=lambda r: (r['model_bytes'], -r['val_macro_f1']))
+
+    print(f'[SEARCH] {name}: {len(results)} configurations, validation macro-F1 '
+          f'(N, S, V, F); kept: the smallest within {SEARCH_F1_TOLERANCE} of the best, '
+          f'up to {EDGE_MODEL_BUDGET_BYTES / 1024:.0f} KB')
+    for r in sorted(results, key=lambda r: -r['val_macro_f1']):
+        if r is chosen:
+            mark = '<- chosen'
+        elif r['model_bytes'] > EDGE_MODEL_BUDGET_BYTES:
+            mark = '(over budget)'
+        elif r in candidates:
+            mark = '(tie, bigger)'
+        else:
+            mark = ''
+        config = ', '.join(f'{key}={value}' for key, value in r['config'].items())
+        print(f'  macro-F1 {r["val_macro_f1"]:.4f} | {r["model_bytes"] / 1024:7.1f} KB | '
+              f'{config} {mark}')
+    return chosen
 
 
 def build_representative_dataset(inputs, n_samples=500, seed=1):

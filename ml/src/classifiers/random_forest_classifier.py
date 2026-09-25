@@ -1,4 +1,5 @@
 from pathlib import Path
+import itertools
 import pickle
 from types import SimpleNamespace
 import emlearn
@@ -8,20 +9,67 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from load_data import RR_FEATURES, build_full_dataset
-from helpers import extract_neurokit_features, print_aami_report, smoothed_class_weights
+from helpers import (extract_neurokit_features, macro_f1, print_aami_report, select_compact_model,
+                     smoothed_class_weights)
 
-# Size/accuracy tradeoff for the embedded target: RANDOM_FOREST_MODEL_BYTES
-# (random_forest_classifier.h) scales directly with the forest's total
-# decision-node count, which is driven by these three. The previous values
-# (40, 20, 2) produced ~150k nodes and an estimated ~1.36MB inlined model.
-# Fewer/shallower trees with larger leaves cut that a lot, but there's no
-# dataset here to measure the resulting accuracy -- re-run the on-device
-# benchmark after retraining with these values and compare against the
-# previous run before trusting them for a final result. Tune further from
-# here if that comparison isn't the tradeoff you want.
-RF_N_ESTIMATORS = 20       # was 40 -- roughly halves node count linearly
-RF_MAX_DEPTH = 12          # was 20 -- cuts node count per tree the most
-RF_MIN_SAMPLES_LEAF = 4    # was 2 -- fewer, larger leaves
+# Hyperparameter search (helpers.select_compact_model): every combination
+# below is trained on the training patients and scored on the validation
+# patients. The inlined forest (random_forest_classifier.h) takes flash in
+# proportion to its total decision-node count, driven by the number of
+# trees, their depth and the leaf size; the search keeps the smallest forest
+# among the ones as good as the best. CLASS_WEIGHT_POWERS changes how much
+# the rare classes are favored (helpers.smoothed_class_weights): with the
+# square root the forest called only 17% of the S beats S on DS2.
+RF_N_ESTIMATORS_VALUES = (10, 20, 40)
+RF_MAX_DEPTH_VALUES = (8, 12, 16)
+RF_MIN_SAMPLES_LEAF_VALUES = (4, 16)
+RF_CLASS_WEIGHT_POWERS = (0.5, 0.75, 1.0)
+
+# Estimated flash per decision node once compiled (a float load + compare +
+# branch on a 32-bit target). method="inline" turns the forest into nested
+# if/else code, so there is no data array whose sizeof() could be reported
+# like the other models' -- this is an estimate, not a measurement.
+RF_BYTES_PER_NODE = 8
+
+
+def forest_node_count(forest_classifier):
+    return sum(tree.tree_.node_count for tree in forest_classifier.estimators_)
+
+
+def train_forest(x_train, y_train, n_estimators, max_depth, min_samples_leaf, class_weight_power):
+    forest_classifier = RandomForestClassifier(
+        n_estimators=n_estimators,
+        max_depth=max_depth,
+        min_samples_leaf=min_samples_leaf,
+        max_features='sqrt',
+        class_weight=smoothed_class_weights(y_train, class_weight_power),
+        random_state=42,
+        n_jobs=-1,
+    )
+    return forest_classifier.fit(x_train, y_train)
+
+
+def search_forest(x_train, y_train, x_validate, y_validate):
+    """Trains every combination in the grid and returns the configuration
+    chosen by helpers.select_compact_model (a dict of train_forest's
+    arguments). The forests are not kept (they can take a lot of memory):
+    the chosen one is trained again, with the same seed."""
+    results = []
+    grid = list(itertools.product(RF_N_ESTIMATORS_VALUES, RF_MAX_DEPTH_VALUES,
+                                  RF_MIN_SAMPLES_LEAF_VALUES, RF_CLASS_WEIGHT_POWERS))
+    for index, (n_estimators, max_depth, min_samples_leaf, power) in enumerate(grid, start=1):
+        forest_classifier = train_forest(x_train, y_train, n_estimators, max_depth,
+                                         min_samples_leaf, power)
+        score = macro_f1(y_validate, forest_classifier.predict(x_validate))
+        results.append({
+            'config': {'n_estimators': n_estimators, 'max_depth': max_depth,
+                       'min_samples_leaf': min_samples_leaf, 'class_weight_power': power},
+            'val_macro_f1': score,
+            'model_bytes': forest_node_count(forest_classifier) * RF_BYTES_PER_NODE,
+        })
+        print(f'[SEARCH] {index}/{len(grid)} {results[-1]["config"]}: '
+              f'validation macro-F1 {score:.4f}, {results[-1]["model_bytes"] / 1024:.1f} KB')
+    return select_compact_model('Random Forest', results)['config']
 
 
 def export_model(forest_classifier):
@@ -36,18 +84,13 @@ def export_model(forest_classifier):
     c_model = emlearn.convert(forest_classifier, method="inline", dtype="float")
     code = c_model.save(name="random_forest")
 
-    # method="inline" turns the forest into nested if/else code, not a data
-    # array, so there is no sizeof()-able "model" to report like the TFLite
-    # models' embedded .tflite blob or the SVM's parameter arrays -- and the
-    # generated C source's byte length is a bad stand-in (it counts every
-    # brace, indent and "return N;", wildly overstating the compiled size).
-    # Total decision-node count across the forest is a real, reproducible
-    # complexity measure; RANDOM_FOREST_BYTES_PER_NODE converts it into an
-    # estimated flash footprint (a compiled node is a float load + compare +
-    # branch, roughly that many bytes on a 32-bit target) -- an estimate,
-    # not a measurement, unlike the other models' reported sizes.
-    bytes_per_node = 8
-    node_count = sum(tree.tree_.node_count for tree in forest_classifier.estimators_)
+    # The generated C source's byte length would be a bad stand-in for the
+    # model size (it counts every brace, indent and "return N;", wildly
+    # overstating the compiled size). Total decision-node count is a real,
+    # reproducible complexity measure; RF_BYTES_PER_NODE converts it into
+    # an estimated flash footprint.
+    bytes_per_node = RF_BYTES_PER_NODE
+    node_count = forest_node_count(forest_classifier)
     model_bytes = node_count * bytes_per_node
 
     header_path = output_directory / "random_forest_classifier.h"
@@ -65,26 +108,21 @@ def main():
     config = SimpleNamespace(split=True, input_size=256, feature='MLII')
     print(f'[CONFIG] Configuration: {vars(config)}')
     print('[DATA] Loading ECG dataset...')
-    # The validation set (patients held out of DS1) is only used by the
-    # models with early stopping (CNN, MLP); RF trains on the same training
-    # patients and is evaluated on the same test patients (DS2).
-    train, _, test = build_full_dataset(config)
+    # The validation patients (held out of DS1) choose the forest's
+    # hyperparameters (search_forest); the final metrics are on the test
+    # patients (DS2).
+    train, validation, test = build_full_dataset(config)
     print(f'[DATA] Training windows shape: {train.X.shape}')
+    print(f'[DATA] Validation windows shape: {validation.X.shape}')
     print(f'[DATA] Test windows shape: {test.X.shape}')
     train_features, train_labels = extract_neurokit_features(train.X, train.rr, train.y)
+    validation_features, validation_labels = extract_neurokit_features(
+        validation.X, validation.rr, validation.y)
     test_features, test_labels = extract_neurokit_features(test.X, test.rr, test.y)
 
-    print("Training model...")
-    forest_classifier = RandomForestClassifier(
-        n_estimators=RF_N_ESTIMATORS,
-        max_depth=RF_MAX_DEPTH,
-        min_samples_leaf=RF_MIN_SAMPLES_LEAF,
-        max_features='sqrt',
-        class_weight=smoothed_class_weights(train_labels),
-        random_state=42,
-        verbose=1,
-    )
-    forest_classifier.fit(train_features, train_labels)
+    chosen = search_forest(train_features, train_labels, validation_features, validation_labels)
+    print(f'[TRAIN] Training the chosen Random Forest: {chosen}')
+    forest_classifier = train_forest(train_features, train_labels, **chosen)
     print('[TRAIN] Random Forest training completed.')
     # 12 morphology features (helpers.beat_features) followed by RR_FEATURES.
     feature_names = [f'morph_{index}' for index in range(12)] + list(RR_FEATURES)
