@@ -226,12 +226,10 @@ int classify(const float *beat, const float *rr)
         features[kMorphologyFeatures + i] = rr[i];
     }
 
-    // Same StandardScaler and clipping to +-MLP_FEATURE_CLIP as in
-    // training (mlp_classifier.py), applied before quantizing so every
-    // feature uses the int8 range.
+    // Same StandardScaler as in training (mlp_classifier.py), applied
+    // before quantizing so every feature uses the int8 range.
     for (int i = 0; i < kFeatureCount; ++i) {
-        features[i] = std::clamp((features[i] - mlp_scaler_mean[i]) / mlp_scaler_scale[i],
-                                 -MLP_FEATURE_CLIP, MLP_FEATURE_CLIP);
+        features[i] = (features[i] - mlp_scaler_mean[i]) / mlp_scaler_scale[i];
     }
 
     if (input_tensor->type == kTfLiteFloat32) {
