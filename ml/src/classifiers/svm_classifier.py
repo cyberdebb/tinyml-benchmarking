@@ -203,10 +203,10 @@ def train_svm(x_train, y_train, C_value=1.0, gamma_value=0.0):
     return model
 
 
-def evaluate_model(model, x_test, y_test):
+def evaluate_model(model, x_test, y_test, records=None):
     print('[EVALUATION] Starting SVM evaluation...')
     predictions = model.predict(x_test)
-    print_aami_report('SVM', y_test, predictions)
+    print_aami_report('SVM', y_test, predictions, records)
     print('[EVALUATION] SVM evaluation completed.')
 
 
@@ -234,7 +234,7 @@ def main(C_value=1.0, gamma_value=0.0):
 
     print("Training SVM...")
     model = train_svm(x_train, y_train, C_value, gamma_value)
-    evaluate_model(model, x_test, y_test)
+    evaluate_model(model, x_test, y_test, test.records)
 
     joblib.dump(model, model_path)
     export_model(model)

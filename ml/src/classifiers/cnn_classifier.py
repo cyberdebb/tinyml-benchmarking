@@ -45,9 +45,13 @@ output_directory = Path('models')
 #     which avoids custom layers and extra TFLite ops (ZEROS_LIKE, CONCATENATION)
 #   - GlobalAveragePooling1D before the classifier
 #   - a second input with the beat's RR features (load_data.RR_FEATURES,
-#     ratios around 1), joined to the pooled morphology features: the
-#     waveform alone doesn't show that a beat came early, which is what
-#     separates S from N
+#     log ratios around 0): the waveform alone doesn't show that a beat
+#     came early, which is what separates S from N. The RR features go
+#     through their own small branch (BatchNormalization + Dense, see
+#     output_block) before being joined to the pooled morphology features:
+#     joined raw, 4 values next to 64 learned ones, the network mostly
+#     ignored them (S sensitivity ~17% vs ~63% for the MLP on the same RR
+#     features)
 #   - each beat is standardized (zero mean, unit variance) before the
 #     network, so amplitude differences between patients/electrodes don't
 #     dominate (normalize_beats, and the same step in tinyml_app_cnn.cc)
@@ -124,7 +128,12 @@ def output_block(layer, inputs, rr_input, config):
     layer = BatchNormalization()(layer)
     layer = Activation('relu')(layer)
     layer = GlobalAveragePooling1D()(layer)
-    layer = concatenate([layer, rr_input])
+    # RR branch: BatchNormalization puts the RR features on the same scale
+    # as the morphology features, and the Dense layer lets the network build
+    # its own combinations of them (e.g. early beat AND followed by a pause).
+    rr_layer = BatchNormalization()(rr_input)
+    rr_layer = Dense(config.rr_units, activation='relu')(rr_layer)
+    layer = concatenate([layer, rr_layer])
     layer = Dense(config.dense_units, activation='relu')(layer)
     outputs = Dense(len(classes), activation='softmax')(layer)
     # The .tflite orders its inputs by name, not in this order:
@@ -275,7 +284,7 @@ def cnn_train(config, train, validation, test):
         # regenerate the .tflite after a converter change.
         print(f'[MODEL] export_only: loading trained model from {config.trained_model}')
         model = keras.models.load_model(config.trained_model)
-        export_and_evaluate(config, model, train_inputs, test_inputs, ytest)
+        export_and_evaluate(config, model, train_inputs, test_inputs, ytest, test.records)
         return
 
     if config.checkpoint_path is not None:
@@ -303,17 +312,17 @@ def cnn_train(config, train, validation, test):
     )
     print('[TRAIN] Training completed.')
 
-    export_and_evaluate(config, model, train_inputs, test_inputs, ytest)
+    export_and_evaluate(config, model, train_inputs, test_inputs, ytest, test.records)
 
 
-def export_and_evaluate(config, model, train_inputs, test_inputs, ytest):
+def export_and_evaluate(config, model, train_inputs, test_inputs, ytest, test_records):
     # Final metrics on the test set (DS2): patients never seen in training
     # or in the early stopping / model selection done on the validation set.
     tflite_path = export_model(model, train_inputs)
-    evaluate_tflite(tflite_path, test_inputs, ytest)
+    evaluate_tflite(tflite_path, test_inputs, ytest, test_records)
 
     print('[EVALUATION] Starting test evaluation (Keras float model)...')
-    print_results(config, model, test_inputs, ytest, classes)
+    print_results(config, model, test_inputs, ytest, classes, test_records)
     print('[EVALUATION] Test evaluation completed.')
 
 
@@ -327,6 +336,7 @@ def main():
         n_blocks=6,
         drop_rate=0.2,
         dense_units=32,
+        rr_units=16,
         feature='MLII',
         epochs=80,
         batch=256,

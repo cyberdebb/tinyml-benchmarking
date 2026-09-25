@@ -27,8 +27,8 @@ namespace {
 constexpr char TAG[] = "tinyml";
 constexpr int kInputSamples = 256;
 // RR features sent after the samples on each line, in the order of
-// RR_FEATURES in ml/src/load_data.py: pre_rr_local, post_rr_local,
-// post_pre_rr, pre_rr_long (all ratios between RR intervals).
+// RR_FEATURES in ml/src/load_data.py: log_pre_rr_local, log_post_rr_local,
+// log_post_pre_rr, log_pre_rr_long (logs of ratios between RR intervals).
 constexpr int kRrFeatures = 4;
 constexpr int kClassCount = 5;
 constexpr int kLineSize = 4096;
@@ -221,10 +221,12 @@ int classify(const float *beat, const float *rr)
         features[kMorphologyFeatures + i] = rr[i];
     }
 
-    // Same StandardScaler as in training (mlp_classifier.py), applied
-    // before quantizing so every feature uses the int8 range.
+    // Same StandardScaler and clipping to +-MLP_FEATURE_CLIP as in
+    // training (mlp_classifier.py), applied before quantizing so every
+    // feature uses the int8 range.
     for (int i = 0; i < kFeatureCount; ++i) {
-        features[i] = (features[i] - mlp_scaler_mean[i]) / mlp_scaler_scale[i];
+        features[i] = std::clamp((features[i] - mlp_scaler_mean[i]) / mlp_scaler_scale[i],
+                                 -MLP_FEATURE_CLIP, MLP_FEATURE_CLIP);
     }
 
     if (input_tensor->type == kTfLiteFloat32) {

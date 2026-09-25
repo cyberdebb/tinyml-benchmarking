@@ -15,7 +15,7 @@ import pandas as pd
 from pathlib import Path
 
 
-def print_results(config, model, Xval, yval, classes):
+def print_results(config, model, Xval, yval, classes, records=None):
     model.load_weights(config.trained_model)
     
     ypred_mat = model.predict(Xval)
@@ -26,7 +26,7 @@ def print_results(config, model, Xval, yval, classes):
     ytrue = np.argmax(yval, axis=1) if yval.ndim > 1 else yval.astype(int)
     ypred = np.argmax(ypred_mat, axis=1)
     
-    print_aami_report('Keras float model', ytrue, ypred)
+    print_aami_report('Keras float model', ytrue, ypred, records)
 
 
 def plot_beat(beat_array, class_id=None):
@@ -186,7 +186,7 @@ def build_representative_dataset(inputs, n_samples=500, seed=1):
     return representative_dataset
 
 
-def evaluate_tflite(tflite_path, inputs, y):
+def evaluate_tflite(tflite_path, inputs, y, records=None):
     """Runs the quantized model on the given inputs (one array per model
     input) to check the metrics after quantization (this is what actually
     runs on the boards) and returns its predictions. Each TFLite input is
@@ -216,7 +216,7 @@ def evaluate_tflite(tflite_path, inputs, y):
         interpreter.invoke()
         predictions[index] = np.argmax(interpreter.get_tensor(output_details['index'])[0])
 
-    print_aami_report('TFLite int8 model', y, predictions)
+    print_aami_report('TFLite int8 model', y, predictions, records)
 
     ops = sorted({op['op_name'] for op in interpreter._get_ops_details()})
     print(f'[EVALUATION] TFLite ops used (must be registered in the firmware): {ops}')

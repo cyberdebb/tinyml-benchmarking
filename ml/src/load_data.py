@@ -72,20 +72,26 @@ ALL_RECORDS = DS1_RECORDS + PACED_TRAIN_RECORDS + DS2_RECORDS + PACED_TEST_RECOR
 # Todas sao razoes, nao intervalos em segundos: o RR absoluto depende da
 # frequencia cardiaca de cada paciente, e no split inter-paciente o modelo
 # acaba aprendendo o ritmo dos pacientes do treino em vez da prematuridade.
+# E o que vai para os modelos e o LOG de cada razao: 0 = ritmo normal,
+# simetrico entre adiantado e atrasado (0.5 e 2 viram -0.69 e +0.69), e sem
+# as caudas longas das razoes cruas (uma pausa de 6 s da post_pre_rr ~8).
+# As caudas longas estragam a quantizacao int8: a entrada do MLP e o RR da
+# CNN tem uma escala so para o tensor inteiro, e um valor extremo deixa
+# poucos niveis para os valores tipicos.
 # As medias usam so os intervalos ANTERIORES ao batimento (causal, como seria
 # em tempo real, e sem que um batimento prematuro puxe a propria referencia):
 #   local_rr: media dos ultimos RR_LOCAL_BEATS intervalos (ritmo recente)
 #   long_rr:  media dos ultimos RR_LONG_BEATS intervalos (~5 min, ritmo de
 #             base do paciente)
 # e as features sao:
-#   pre_rr_local:  pre_rr / local_rr  (prematuridade)
-#   post_rr_local: post_rr / local_rr (pausa depois do batimento)
-#   post_pre_rr:   post_rr / pre_rr   (pausa compensatoria)
-#   pre_rr_long:   pre_rr / long_rr   (prematuridade em relacao ao ritmo de
-#                  base, robusta quando os ultimos batimentos tambem foram
-#                  ectopicos, como em bigeminismo)
+#   log_pre_rr_local:  log(pre_rr / local_rr)  (prematuridade)
+#   log_post_rr_local: log(post_rr / local_rr) (pausa depois do batimento)
+#   log_post_pre_rr:   log(post_rr / pre_rr)   (pausa compensatoria)
+#   log_pre_rr_long:   log(pre_rr / long_rr)   (prematuridade em relacao ao
+#                      ritmo de base, robusta quando os ultimos batimentos
+#                      tambem foram ectopicos, como em bigeminismo)
 # onde pre_rr = R atual - R anterior e post_rr = R seguinte - R atual.
-RR_FEATURES = ('pre_rr_local', 'post_rr_local', 'post_pre_rr', 'pre_rr_long')
+RR_FEATURES = ('log_pre_rr_local', 'log_post_rr_local', 'log_post_pre_rr', 'log_pre_rr_long')
 RR_LOCAL_BEATS = 10
 RR_LONG_BEATS = 300
 
@@ -96,7 +102,7 @@ SCORED_CLASSES = ('N', 'S', 'V', 'F')
 
 # Versao do formato do cache: aumentar sempre que o que e salvo nele mudar
 # (janelas, RR_FEATURES, registros), para que caches antigos sejam refeitos.
-DATASET_CACHE_VERSION = 2
+DATASET_CACHE_VERSION = 3
 
 # 1. Filtro Causal (Pronto para o Edge AI / ESP32)
 #
@@ -220,13 +226,13 @@ def rr_features(pre_rr_all, i):
     """RR_FEATURES of beat i. pre_rr_all[j] is the interval (s) between beat
     j-1 and beat j (pre_rr_all[0] is NaN). The local and long averages use
     only the intervals before beat i; for the first beats of a record, with
-    no earlier interval, pre_rr itself is the reference (ratios of 1)."""
+    no earlier interval, pre_rr itself is the reference (ratios of 1, log 0)."""
     pre_rr = pre_rr_all[i]
     post_rr = pre_rr_all[i + 1]
     previous = pre_rr_all[1:i]
     local_rr = np.mean(previous[-RR_LOCAL_BEATS:]) if len(previous) else pre_rr
     long_rr = np.mean(previous[-RR_LONG_BEATS:]) if len(previous) else pre_rr
-    return (pre_rr / local_rr, post_rr / local_rr, post_rr / pre_rr, pre_rr / long_rr)
+    return tuple(np.log((pre_rr / local_rr, post_rr / local_rr, post_rr / pre_rr, pre_rr / long_rr)))
 
 
 # 3.1 Cache local do dataset já processado (janelas extraídas de todos os registros)
@@ -320,7 +326,8 @@ def build_full_dataset(config):
     """With config.split, returns (train, validation, test), split by patient
     (see DS1_RECORDS / TEST_RECORDS above); otherwise returns every beat as a
     single set. Each set has .X (band-pass filtered beat windows), .rr (the
-    RR_FEATURES of each beat) and .y (class ids)."""
+    RR_FEATURES of each beat), .y (class ids) and .records (the MIT-BIH
+    record of each beat, for the per-patient report)."""
     print('[START] Dataset loading started.')
     print(f"[CONFIG] Feature: {config.feature}")
     print(f"[CONFIG] Input window size: {config.input_size}")
@@ -332,7 +339,8 @@ def build_full_dataset(config):
         # salvo de volta no cache. Reproduz exatamente o que o firmware faz
         # com cada janela recebida por serial (ver filter_beats acima).
         print_class_distribution(name, y_total[mask])
-        return SimpleNamespace(X=filter_beats(X_total[mask]), rr=rr_total[mask], y=y_total[mask])
+        return SimpleNamespace(X=filter_beats(X_total[mask]), rr=rr_total[mask], y=y_total[mask],
+                               records=records[mask])
 
     # 3. Usa a config para decidir se faz o split ou não
     if config.split:
