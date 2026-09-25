@@ -6,12 +6,7 @@
 .vscode/ipch
 
 # Models
-cnn_classifier.h
-mlp_classifier.h
-mlp_classifier_scaler.h
-random_forest_classifier.h
-svm_classifier.h
-svm_classifier_scaler.h
+include/models/
 
 # Results
 results
