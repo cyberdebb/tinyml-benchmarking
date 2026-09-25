@@ -4,9 +4,10 @@ os.environ.setdefault('TF_ENABLE_ONEDNN_OPTS', '0')
 
 import matplotlib.pyplot as plt
 import numpy as np
-from load_data import RR_FEATURES, SCORED_CLASSES, aami_mapping, classes, sampling_rate
+from load_data import RR_FEATURES, aami_mapping, classes, sampling_rate
+from metrics import macro_f1, print_aami_report  # noqa: F401 (re-exported for the classifiers)
 from keras import models
-from sklearn.metrics import accuracy_score, confusion_matrix, f1_score
+from sklearn.metrics import accuracy_score
 import sys
 import matplotlib.pyplot as plt
 import numpy as np
@@ -26,64 +27,6 @@ def print_results(config, model, Xval, yval, classes):
     ypred = np.argmax(ypred_mat, axis=1)
     
     print_aami_report('Keras float model', ytrue, ypred)
-
-
-SCORED_CLASS_IDS = [classes.index(name) for name in SCORED_CLASSES]
-
-
-def macro_f1(y_true, y_pred):
-    """Mean F1 over SCORED_CLASSES (N, S, V, F). The metric the models are
-    compared on and the one used to pick the best epoch/checkpoint: accuracy
-    is dominated by N (always answering N already scores ~0.89 on DS2)."""
-    return f1_score(np.asarray(y_true).astype(int), np.asarray(y_pred).astype(int),
-                    labels=SCORED_CLASS_IDS, average='macro', zero_division=0)
-
-
-def print_aami_report(name, y_true, y_pred):
-    """Prints the test metrics every classifier reports, and returns them as
-    a DataFrame (one row per class).
-
-    Per class, one-vs-rest from the confusion matrix (the AAMI EC57 / de
-    Chazal metrics):
-      Se  (sensitivity, recall)  = TP / (TP + FN)
-      +P  (positive predictivity) = TP / (TP + FP)
-      FPR (false positive rate)   = FP / (FP + TN)
-      F1                          = 2TP / (2TP + FP + FN)
-    plus the accuracy, the accuracy of always answering N (the baseline the
-    accuracy has to beat) and the macro-F1 over SCORED_CLASSES.
-    """
-    y_true = np.asarray(y_true).astype(int)
-    y_pred = np.asarray(y_pred).astype(int)
-    matrix = confusion_matrix(y_true, y_pred, labels=np.arange(len(classes)))
-    total = matrix.sum()
-
-    rows = {'Se': [], '+P': [], 'FPR': [], 'F1': [], 'Support': []}
-    for index in range(len(classes)):
-        true_positive = matrix[index, index]
-        false_negative = matrix[index, :].sum() - true_positive
-        false_positive = matrix[:, index].sum() - true_positive
-        true_negative = total - true_positive - false_negative - false_positive
-
-        def ratio(numerator, denominator):
-            return numerator / denominator if denominator else float('nan')
-
-        rows['Se'].append(ratio(true_positive, true_positive + false_negative))
-        rows['+P'].append(ratio(true_positive, true_positive + false_positive))
-        rows['FPR'].append(ratio(false_positive, false_positive + true_negative))
-        rows['F1'].append(ratio(2 * true_positive, 2 * true_positive + false_positive + false_negative))
-        rows['Support'].append(int(matrix[index, :].sum()))
-    report = pd.DataFrame(rows, index=classes)
-
-    accuracy = accuracy_score(y_true, y_pred)
-    always_normal = np.mean(y_true == classes.index('N'))
-    print(f'[EVALUATION] {name} -- test set ({len(y_true)} beats)')
-    print('Confusion matrix (rows = true, columns = predicted: '
-          f'{", ".join(classes)}):')
-    print(matrix)
-    print(report.to_string(float_format='{:.4f}'.format))
-    print(f'Accuracy: {accuracy:.4f} (always predicting N: {always_normal:.4f})')
-    print(f'Macro-F1 ({", ".join(SCORED_CLASSES)}): {macro_f1(y_true, y_pred):.4f}')
-    return report
 
 
 def plot_beat(beat_array, class_id=None):
