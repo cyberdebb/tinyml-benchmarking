@@ -5,9 +5,6 @@
 .vscode/launch.json
 .vscode/ipch
 
-# Not relevant folders
-test
-
 # Models
 cnn_classifier.h
 mlp_classifier.h

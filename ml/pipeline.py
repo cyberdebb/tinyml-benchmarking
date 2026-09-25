@@ -151,7 +151,7 @@ def write_tflite_header(source, destination):
 
 def copy_model_files(firmware_directory):
     """Step 2: Distribute the generated models and headers to the MCU project."""
-    firmware_src_directory = firmware_directory / 'src'
+    firmware_models_directory = firmware_directory / 'include' / 'models'
     
     print(f'[PIPELINE] Step 2: Copying model files to {firmware_directory.name}...')
 
@@ -162,25 +162,25 @@ def copy_model_files(firmware_directory):
         print(f'[ERROR] Firmware directory not found: {firmware_directory}')
         sys.exit(1)
 
-    firmware_src_directory.mkdir(parents=True, exist_ok=True)
+    firmware_models_directory.mkdir(parents=True, exist_ok=True)
 
-    # 2.1 .tflite files are converted into C array headers in the firmware src/ directory
+    # 2.1 .tflite files are converted into C array headers in the firmware models/ directory
     for file_name in tflite_files:
         source = models_directory / file_name
         if source.exists():
             header_name = tflite_header_name(file_name)
-            write_tflite_header(source, firmware_src_directory / header_name)
-            print(f'  -> Converted {file_name} to {header_name} in firmware src folder '
+            write_tflite_header(source, firmware_models_directory / header_name)
+            print(f'  -> Converted {file_name} to {header_name} in firmware models folder '
                   f'({source.stat().st_size / 1024:.0f} KB).')
         else:
             print(f'[WARNING] {file_name} not found in models directory.')
 
-    # 2.2 C/C++ headers go to the firmware src/ directory
+    # 2.2 C/C++ headers go to the firmware models/ directory
     for file_name in header_files:
         source = models_directory / file_name
         if source.exists():
-            shutil.copy(source, firmware_src_directory / file_name)
-            print(f'  -> Copied {file_name} to firmware src folder.')
+            shutil.copy(source, firmware_models_directory / file_name)
+            print(f'  -> Copied {file_name} to firmware models folder.')
         else:
             print(f'[WARNING] {file_name} not found in models directory.')
 
@@ -189,7 +189,7 @@ def copy_model_files(firmware_directory):
 
 def clean_model_files(firmware_directory):
     """Reverses copy_model_files by deleting the models and headers from the MCU project."""
-    firmware_src_directory = firmware_directory / 'src'
+    firmware_models_directory = firmware_directory / 'include' / 'models'
     
     print(f'[PIPELINE] Deleting model files from {firmware_directory.name}...')
 
@@ -199,12 +199,12 @@ def clean_model_files(firmware_directory):
 
     generated_headers = tuple(tflite_header_name(file_name) for file_name in tflite_files)
     for file_name in generated_headers + header_files:
-        target = firmware_src_directory / file_name
+        target = firmware_models_directory / file_name
         if target.exists():
             target.unlink()
-            print(f'  -> Deleted {file_name} from firmware src folder.')
+            print(f'  -> Deleted {file_name} from firmware models folder.')
         else:
-            print(f'  -> [SKIP] {file_name} not found in firmware src folder.')
+            print(f'  -> [SKIP] {file_name} not found in firmware models folder.')
 
     print('[PIPELINE] Deletion completed successfully.\n')
 
