@@ -44,6 +44,7 @@ results_directory = firmware_directory / 'results'
 sys.path.insert(0, str(dataset_directory / 'src'))
 from load_data import TEST_RECORDS, cache_is_current, dataset_cache_path, select_records  # noqa: E402
 from metrics import SCORED_CLASS_IDS, aami_report  # noqa: E402
+from model_size import measure_forest_flash_bytes  # noqa: E402
 
 # Must match the classifier configs and the pipeline dataset_config.
 dataset_config = SimpleNamespace(feature='MLII', input_size=256)
@@ -221,8 +222,11 @@ def summary_text(model, y_true, y_predicted, records, inference_us, filter_us, m
     lines = ['==================================================',
              f'  Model: {model}']
     if model_info:
-        lines += [f"  Model size: {model_info['model_bytes'] / 1024:.1f} KB",
-                  f"  Arena used: {model_info['arena_bytes'] / 1024:.1f} KB"]
+        size_note = model_info.get('size_note', '')
+        lines += [f"  Model size: {model_info['model_bytes'] / 1024:.1f} KB{size_note}",
+                  # CNN/MLP: TFLite Micro arena; SVM: kernel value buffer;
+                  # RF: none (stack only).
+                  f"  Model RAM:  {model_info['arena_bytes'] / 1024:.1f} KB"]
     lines += [
         f'  Beats: {len(y_true)}',
         f'  Accuracy:      {accuracy:.4f}',
@@ -239,6 +243,21 @@ def summary_text(model, y_true, y_predicted, records, inference_us, filter_us, m
     ]
     report, _ = aami_report(f'{model} on the board', y_true, y_predicted, records)
     return report + '\n\n' + '\n'.join(lines)
+
+
+def rf_flash_size(estimated_bytes):
+    """The forest is if/else code, so the board only reports an estimate
+    (node count x 8 bytes). If the rf build is here (pio run -e rf), use the
+    real compiled size instead (ml/src/model_size.py)."""
+    measured = measure_forest_flash_bytes(firmware_directory / '.pio' / 'build' / 'rf')
+    if measured is None:
+        print('[WARNING] Could not measure the Random Forest size from .pio/build/rf '
+              '(build it here with "pio run -e rf", and pip install pyelftools); '
+              'reporting the node-count estimate.')
+        return {'model_bytes': estimated_bytes, 'size_note': ' (estimated from the node count)'}
+    print(f'[DATA] Random Forest size measured from the build: {measured} bytes '
+          f'(the node-count estimate was {estimated_bytes})')
+    return {'model_bytes': measured, 'size_note': ' (measured from the build)'}
 
 
 def format_duration(seconds):
@@ -297,6 +316,8 @@ def main():
 
             print('[SERIAL] Waiting for the firmware. Press the RESET button...')
             model_info = wait_for_ready(connection)
+            if arguments.model == 'rf' and model_info:
+                model_info.update(rf_flash_size(model_info['model_bytes']))
 
             start_time = time.time()
             try:

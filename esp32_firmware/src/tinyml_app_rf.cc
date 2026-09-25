@@ -135,6 +135,14 @@ bool init_model()
     return true;
 }
 
+// The whole forest is compiled into this one function (noinline, so it
+// doesn't get mixed into classify()): benchmark_serial.py measures its real
+// flash footprint from the build (ml/src/model_size.py).
+__attribute__((noinline)) int32_t tinyml_forest_predict(const float *features)
+{
+    return random_forest_predict(features, kFeatureCount);
+}
+
 int classify(const float *beat, const float *rr)
 {
     float features[kFeatureCount];
@@ -143,16 +151,18 @@ int classify(const float *beat, const float *rr)
         features[kMorphologyFeatures + i] = rr[i];
     }
 
-    return random_forest_predict(features, kFeatureCount);
+    return tinyml_forest_predict(features);
 }
 
 void print_model_info()
 {
-    // Classic models live in the binary itself: no runtime arena. The
-    // trees are inlined if/else code, not a data table, so there is no
-    // blob to sizeof() like the other models have; RANDOM_FOREST_MODEL_BYTES
-    // (random_forest_classifier.h) is an estimate from the forest's total
-    // decision-node count, not a measurement of the compiled code size.
+    // Classic models live in the binary itself: no runtime arena, and the
+    // forest needs no RAM besides the stack. The trees are inlined if/else
+    // code, not a data table, so there is no blob to sizeof() like the
+    // other models have; RANDOM_FOREST_MODEL_BYTES (random_forest_classifier.h)
+    // is an estimate from the forest's total decision-node count.
+    // benchmark_serial.py replaces it with the size measured from the build
+    // (ml/src/model_size.py) when the build is there.
     std::printf("INFO,%s,%u,0\n", kModelName,
                 static_cast<unsigned>(RANDOM_FOREST_MODEL_BYTES));
     std::fflush(stdout);

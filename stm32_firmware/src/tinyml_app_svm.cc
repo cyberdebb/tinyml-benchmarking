@@ -161,8 +161,11 @@ void print_model_info()
     // Classic models live in the binary itself: no runtime arena. Model
     // size is SVM_MODEL_BYTES (svm_classifier.h): the actual flash
     // footprint of the support vectors/coefficients/intercepts arrays.
-    std::printf("INFO,%s,%u,0\n", kModelName,
-                static_cast<unsigned>(SVM_MODEL_BYTES));
+    // RAM: svm_predict() keeps the kernel value of every support vector in
+    // a static float array (kvalue), the SVM's equivalent of an arena.
+    std::printf("INFO,%s,%u,%u\n", kModelName,
+                static_cast<unsigned>(SVM_MODEL_BYTES),
+                static_cast<unsigned>(SVM_SUPPORT_VECTOR_COUNT * sizeof(float)));
     std::fflush(stdout);
 }
 
