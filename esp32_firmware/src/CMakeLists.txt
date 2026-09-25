@@ -13,16 +13,16 @@ endif()
 
 if(TINYML_MODEL STREQUAL "cnn")
     set(model_define TINYML_MODEL_CNN)
-    set(model_source "tinyml_app_cnn.cc")
+    set(model_source "model_cnn.cc")
 elseif(TINYML_MODEL STREQUAL "mlp")
     set(model_define TINYML_MODEL_MLP)
-    set(model_source "tinyml_app_mlp.cc")
+    set(model_source "model_mlp.cc")
 elseif(TINYML_MODEL STREQUAL "rf")
     set(model_define TINYML_MODEL_RF)
-    set(model_source "tinyml_app_rf.cc")
+    set(model_source "model_rf.cc")
 elseif(TINYML_MODEL STREQUAL "svm")
     set(model_define TINYML_MODEL_SVM)
-    set(model_source "tinyml_app_svm.cc")
+    set(model_source "model_svm.cc")
 else()
     message(FATAL_ERROR "TINYML_MODEL invalido: ${TINYML_MODEL} (use cnn, mlp, rf ou svm)")
 endif()
@@ -30,9 +30,12 @@ endif()
 idf_component_register(
     SRCS
         "main.c"
+        "tinyml_app.cc"
+        "tinyml_common.cc"
+        "beat_features.cc"
         "${model_source}"
     INCLUDE_DIRS
-        "."
+        "../include"
     REQUIRES
         espressif__esp-tflite-micro
         esp_driver_uart
