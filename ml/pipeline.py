@@ -153,7 +153,7 @@ def copy_model_files(firmware_directory):
     """Step 2: Distribute the generated models and headers to the MCU project."""
     firmware_src_directory = firmware_directory / 'src'
     
-    print('[PIPELINE] Step 2: Copying model files to MCU firmware folder...')
+    print(f'[PIPELINE] Step 2: Copying model files to {firmware_directory.name}...')
 
     if not models_directory.exists():
         print(f'[ERROR] Models directory not found: {models_directory}')
@@ -191,7 +191,7 @@ def clean_model_files(firmware_directory):
     """Reverses copy_model_files by deleting the models and headers from the MCU project."""
     firmware_src_directory = firmware_directory / 'src'
     
-    print('[PIPELINE] Deleting model files from MCU firmware folder...')
+    print(f'[PIPELINE] Deleting model files from {firmware_directory.name}...')
 
     if not firmware_directory.exists():
         print(f'[WARNING] Firmware directory not found: {firmware_directory}')
@@ -209,9 +209,9 @@ def clean_model_files(firmware_directory):
     print('[PIPELINE] Deletion completed successfully.\n')
 
 
-def clean_training_directories():
-    """Deletes the logs and models directories and all their contents."""
-    print('[PIPELINE] Deleting ML output directories...')
+def clean_training_directories(firmware_directory):
+    """Deletes the logs, models and results directories and all their contents."""
+    print(f'[PIPELINE] Deleting ML output directories for {firmware_directory.name}...')
     
     ml_dir = Path(__file__).resolve().parent
     directories_to_delete = ['logs', 'models']
@@ -224,6 +224,14 @@ def clean_training_directories():
             print(f'  -> Deleted directory and its contents: {dir_name}/')
         else:
             print(f'  -> [SKIP] Directory not found: {dir_name}/')
+
+    results_dir = Path(firmware_directory) / 'results'
+    
+    if results_dir.exists() and results_dir.is_dir():
+        shutil.rmtree(results_dir)
+        print(f'  -> Deleted directory and its contents: {results_dir.name}/ (in firmware root)')
+    else:
+        print(f'  -> [SKIP] Directory not found: {results_dir.name}/ (in firmware root)')
 
     print('[PIPELINE] Directories deletion completed successfully.\n')
 
@@ -261,7 +269,7 @@ def build_and_upload_firmware(model, firmware_directory):
         print(f"[ERROR] Invalid model '{model}'. Choose one of: {', '.join(classifier_scripts)}.")
         sys.exit(1)
 
-    print(f"[PIPELINE] Step 3: Building and uploading MCU firmware for model '{model}'...")
+    print(f"[PIPELINE] Step 3: Building and uploading {firmware_directory.name} for model '{model}'...")
 
     pio = find_pio_executable()
     if pio is None:
@@ -298,7 +306,7 @@ def main():
     for firmware_directory in (esp32_firmware_directory, stm32_firmware_directory):
         copy_model_files(firmware_directory)
         # clean_model_files(firmware_directory)
-        # clean_training_directories()
+        # clean_training_directories(firmware_directory)
 
     # Step 3: build and flash one model. Only one fits on the board at a time.
     # build_and_upload_firmware('cnn', esp32_firmware_directory)

@@ -7,7 +7,6 @@
 
 # Not relevant folders
 test
-compare_board_python.py
 
 # Models
 cnn_classifier.h
