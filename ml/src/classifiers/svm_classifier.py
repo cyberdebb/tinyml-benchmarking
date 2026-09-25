@@ -1,4 +1,5 @@
 from pathlib import Path
+import time
 import joblib
 import numpy as np
 from sklearn.pipeline import make_pipeline
@@ -10,7 +11,19 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from load_data import build_full_dataset
-from helpers import extract_neurokit_features, print_aami_report, smoothed_class_weights
+from helpers import (extract_neurokit_features, macro_f1, print_aami_report, select_compact_model,
+                     smoothed_class_weights)
+
+# Hyperparameter search (helpers.select_compact_model): every (C, gamma)
+# pair is trained on the training patients and scored on the validation
+# patients. gamma is for the standardized features: 0.0625 = 1/16 is what
+# gamma='scale' gives for 16 standardized features (the previous default).
+# On the board, flash, RAM and inference time all grow with the number of
+# support vectors (every prediction computes the kernel against each one),
+# which C and gamma change a lot; the search keeps the smallest model among
+# the ones as good as the best.
+SVM_C_VALUES = (0.3, 1.0, 3.0, 10.0)
+SVM_GAMMA_VALUES = (0.03, 0.0625, 0.125)
 
 
 def _format_float(value):
@@ -179,28 +192,61 @@ def export_model(model):
     print(f'[EXPORT] Saved StandardScaler parameters to {scaler_header}.')
 
 
-def train_svm(x_train, y_train, C_value=1.0, gamma_value=0.0):
-    print('[TRAIN] Starting SVM training...')
-    print(f'[TRAIN] Training features shape: {x_train.shape}')
-    print(f'[TRAIN] Training labels shape: {y_train.shape}')
-    gamma = "scale" if gamma_value == 0.0 else gamma_value
+def train_svm(x_train, y_train, C_value, gamma_value):
     # Same class weights as the other models (helpers.smoothed_class_weights).
     model = make_pipeline(
         StandardScaler(),
         SVC(
             C=C_value,
-            gamma=gamma,
+            gamma=gamma_value,
             kernel="rbf",
             class_weight=smoothed_class_weights(y_train),
             decision_function_shape="ovo",
             probability=False,
             max_iter=10000,
-            verbose=True,
+            # Kernel cache in MB (default 200): only speeds up the training.
+            cache_size=1000,
         ),
     )
     model.fit(x_train, y_train)
-    print('[TRAIN] SVM training completed.')
     return model
+
+
+def svm_model_bytes(model):
+    """Flash taken by the model's arrays in svm_classifier.h (the same
+    arrays SVM_MODEL_BYTES adds up on the board): int16 support vectors and
+    dual coefficients, float intercepts, int32 per-class counts/starts. The
+    board also needs 4 bytes of RAM per support vector (kvalue)."""
+    classifier = model.named_steps['svc']
+    support_vector_count, feature_count = classifier.support_vectors_.shape
+    class_count = len(classifier.classes_)
+    pair_count = class_count * (class_count - 1) // 2
+    return (support_vector_count * feature_count * 2
+            + (class_count - 1) * support_vector_count * 2
+            + pair_count * 4
+            + class_count * 2 * 4)
+
+
+def search_svm(x_train, y_train, x_validate, y_validate):
+    """Trains every (C, gamma) in the grid and returns the model chosen by
+    helpers.select_compact_model."""
+    results = []
+    grid = [(C_value, gamma_value) for C_value in SVM_C_VALUES for gamma_value in SVM_GAMMA_VALUES]
+    for index, (C_value, gamma_value) in enumerate(grid, start=1):
+        start = time.time()
+        model = train_svm(x_train, y_train, C_value, gamma_value)
+        score = macro_f1(y_validate, model.predict(x_validate))
+        support_vectors = len(model.named_steps['svc'].support_vectors_)
+        results.append({
+            'config': {'C': C_value, 'gamma': gamma_value, 'support_vectors': support_vectors},
+            'val_macro_f1': score,
+            'model_bytes': svm_model_bytes(model),
+            'model': model,
+        })
+        print(f'[SEARCH] {index}/{len(grid)} C={C_value}, gamma={gamma_value}: '
+              f'validation macro-F1 {score:.4f}, {support_vectors} support vectors '
+              f'({time.time() - start:.0f} s)')
+    return select_compact_model('SVM', results)['model']
 
 
 def evaluate_model(model, x_test, y_test, records=None):
@@ -210,7 +256,7 @@ def evaluate_model(model, x_test, y_test, records=None):
     print('[EVALUATION] SVM evaluation completed.')
 
 
-def main(C_value=1.0, gamma_value=0.0):
+def main():
     print('[START] SVM classifier execution started.')
 
     model_path = Path("models/svm_classifier.joblib")
@@ -221,19 +267,23 @@ def main(C_value=1.0, gamma_value=0.0):
         "input_size": 256,
         "feature": "MLII",
     })()
-    print(f'[CONFIG] C={C_value}, gamma={gamma_value}')
     print('[DATA] Loading ECG dataset...')
-    # The validation set (patients held out of DS1) is only used by the
-    # models with early stopping (CNN, MLP); SVM trains on the same training
-    # patients and is evaluated on the same test patients (DS2).
-    train, _, test = build_full_dataset(config)
+    # The validation patients (held out of DS1) choose C and gamma
+    # (search_svm); the final metrics are on the test patients (DS2).
+    train, validation, test = build_full_dataset(config)
     print(f'[DATA] Training windows shape: {train.X.shape}')
+    print(f'[DATA] Validation windows shape: {validation.X.shape}')
     print(f'[DATA] Test windows shape: {test.X.shape}')
     x_train, y_train = extract_neurokit_features(train.X, train.rr, train.y)
+    x_validate, y_validate = extract_neurokit_features(validation.X, validation.rr, validation.y)
     x_test, y_test = extract_neurokit_features(test.X, test.rr, test.y)
 
-    print("Training SVM...")
-    model = train_svm(x_train, y_train, C_value, gamma_value)
+    print(f'[TRAIN] SVM search: C in {SVM_C_VALUES}, gamma in {SVM_GAMMA_VALUES}')
+    model = search_svm(x_train, y_train, x_validate, y_validate)
+    classifier = model.named_steps['svc']
+    print(f'[TRAIN] Chosen SVM: C={classifier.C}, gamma={classifier.gamma}, '
+          f'{len(classifier.support_vectors_)} support vectors, '
+          f'{svm_model_bytes(model) / 1024:.1f} KB')
     evaluate_model(model, x_test, y_test, test.records)
 
     joblib.dump(model, model_path)
