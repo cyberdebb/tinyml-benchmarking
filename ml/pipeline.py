@@ -104,6 +104,10 @@ def run_trainings(models):
 
     environment = os.environ.copy()
     environment['PYTHONPATH'] = str(src_directory)
+    # The classifiers' output is read as UTF-8 (run_classifier). When it goes
+    # to a pipe, Python on Windows would otherwise write it in the ANSI code
+    # page (cp1252), where the Keras progress bar ('━') doesn't exist.
+    environment['PYTHONIOENCODING'] = 'utf-8'
 
     # Keep going even if one classifier fails, so the others still get trained.
     failed_classifiers = [
@@ -285,6 +289,11 @@ def build_and_upload_firmware(model, firmware_directory):
 # ---------------------------------------------------------------------------
 
 def main():
+    # With the output piped (e.g. '| Tee-Object treino.log'), Windows uses
+    # its ANSI code page (cp1252) for stdout, which can't encode characters
+    # like the Keras progress bar: replace them instead of crashing.
+    sys.stdout.reconfigure(errors='replace')
+
     print('==================================================')
     print('         TinyML Automated Pipeline Start          ')
     print('==================================================')
