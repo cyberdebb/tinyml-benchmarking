@@ -24,6 +24,16 @@ from helpers import (build_representative_dataset, evaluate_tflite, extract_neur
                      macro_f1, print_aami_report, smoothed_class_weights)
 
 
+# Standardized features are clipped to +-FEATURE_CLIP (training, test and
+# on the board: MLP_FEATURE_CLIP in mlp_classifier_scaler.h). The int8
+# input tensor has a single scale for all 16 features, set by the widest
+# range among them: a few extreme values (long pauses, noisy beats) would
+# stretch it and leave only a handful of int8 levels for the typical
+# values, which is where most of the float -> int8 loss came from. Beyond 5
+# standard deviations the exact value doesn't matter to the classifier.
+FEATURE_CLIP = 5.0
+
+
 def train_model_sklearn(x_train, y_train, x_validate, y_validate):
     """
     Train an MLPClassifier model using scikit-learn.
@@ -118,7 +128,7 @@ def train_model_sklearn(x_train, y_train, x_validate, y_validate):
 
     return mlp_classifier
 
-def evaluate_model(classifier, x_validate, y_validate, directory):
+def evaluate_model(classifier, x_validate, y_validate, directory, records=None):
     """
     Evaluate the trained model using scikit-learn metrics.
 
@@ -128,7 +138,8 @@ def evaluate_model(classifier, x_validate, y_validate, directory):
     - y_validate (numpy.ndarray): Validation labels.
     """
     print('[EVALUATION] Starting MLP evaluation...')
-    print_aami_report('MLP (scikit-learn float model)', y_validate, classifier.predict(x_validate))
+    print_aami_report('MLP (scikit-learn float model)', y_validate, classifier.predict(x_validate),
+                      records)
 
 
 def test_model(classifier, x_test, y_test, directory):
@@ -160,8 +171,9 @@ def test_model(classifier, x_test, y_test, directory):
     
 
 def export_scaler_header(scaler, output_directory):
-    """Writes the StandardScaler parameters for the firmware, which
-    standardizes the features the same way before quantizing them."""
+    """Writes the StandardScaler parameters and FEATURE_CLIP for the
+    firmware, which standardizes and clips the features the same way
+    before quantizing them."""
     scaler_header = output_directory / 'mlp_classifier_scaler.h'
     mean_values = ', '.join(f'{value:.9g}f' for value in scaler.mean_)
     scale_values = ', '.join(f'{value:.9g}f' for value in scaler.scale_)
@@ -169,6 +181,7 @@ def export_scaler_header(scaler, output_directory):
         '#ifndef MLP_CLASSIFIER_SCALER_H\n'
         '#define MLP_CLASSIFIER_SCALER_H\n\n'
         f'#define MLP_FEATURE_COUNT {len(scaler.mean_)}\n'
+        f'#define MLP_FEATURE_CLIP {FEATURE_CLIP:.1f}f\n'
         f'static const float mlp_scaler_mean[MLP_FEATURE_COUNT] = {{{mean_values}}};\n'
         f'static const float mlp_scaler_scale[MLP_FEATURE_COUNT] = {{{scale_values}}};\n\n'
         '#endif\n',
@@ -243,9 +256,13 @@ def main():
     # small-range features collapse to one or two int8 levels. The firmware
     # applies the same scaler (mlp_classifier_scaler.h) before quantizing.
     scaler = StandardScaler().fit(x_train)
-    x_train = scaler.transform(x_train).astype(np.float32)
-    x_validate = scaler.transform(x_validate).astype(np.float32)
-    x_test = scaler.transform(x_test).astype(np.float32)
+
+    def standardize(features):
+        return np.clip(scaler.transform(features), -FEATURE_CLIP, FEATURE_CLIP).astype(np.float32)
+
+    x_train = standardize(x_train)
+    x_validate = standardize(x_validate)
+    x_test = standardize(x_test)
 
     trained_mlp_model = train_model_sklearn(
         x_train,
@@ -255,9 +272,9 @@ def main():
     )
     # Final metrics on the test set (DS2): patients never seen in training
     # or in the early stopping done on the validation set.
-    evaluate_model(trained_mlp_model, x_test, y_test, directory)
+    evaluate_model(trained_mlp_model, x_test, y_test, directory, test.records)
     tflite_path = export_model(trained_mlp_model, scaler, x_train)
-    evaluate_tflite(tflite_path, [x_test], y_test)
+    evaluate_tflite(tflite_path, [x_test], y_test, test.records)
     print('[DONE] MLP classifier execution finished.')
 
 if __name__ == "__main__":

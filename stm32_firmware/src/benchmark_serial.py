@@ -167,7 +167,7 @@ def read_results(output_file):
         return [{key: int(value) for key, value in row.items()} for row in reader]
 
 
-def summary_text(model, y_true, y_predicted, inference_us, filter_us, model_info):
+def summary_text(model, y_true, y_predicted, records, inference_us, filter_us, model_info):
     inference_ms = np.array(inference_us) / 1000.0
     filter_ms = np.array(filter_us) / 1000.0
 
@@ -237,7 +237,7 @@ def summary_text(model, y_true, y_predicted, inference_us, filter_us, model_info
         f'  Throughput:    {throughput:.2f} inferences/second',
         '==================================================',
     ]
-    report, _ = aami_report(f'{model} on the board', y_true, y_predicted)
+    report, _ = aami_report(f'{model} on the board', y_true, y_predicted, records)
     return report + '\n\n' + '\n'.join(lines)
 
 
@@ -335,6 +335,7 @@ def main():
         arguments.model,
         np.array([row['true_class'] for row in rows]),
         np.array([row['predicted_class'] for row in rows]),
+        np.array([row['record'] for row in rows]),
         [row['inference_us'] for row in rows],
         [row['filter_us'] for row in rows],
         model_info,

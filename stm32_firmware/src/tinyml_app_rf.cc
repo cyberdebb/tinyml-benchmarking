@@ -27,8 +27,8 @@ namespace {
 
 constexpr int kInputSamples = 256;
 // RR features sent after the samples on each line, in the order of
-// RR_FEATURES in ml/src/load_data.py: pre_rr_local, post_rr_local,
-// post_pre_rr, pre_rr_long (all ratios between RR intervals).
+// RR_FEATURES in ml/src/load_data.py: log_pre_rr_local, log_post_rr_local,
+// log_post_pre_rr, log_pre_rr_long (logs of ratios between RR intervals).
 constexpr int kRrFeatures = 4;
 constexpr int kClassCount = 5;
 constexpr int kLineSize = 4096;

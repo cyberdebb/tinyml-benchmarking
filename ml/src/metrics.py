@@ -19,9 +19,34 @@ def macro_f1(y_true, y_pred):
                     labels=SCORED_CLASS_IDS, average='macro', zero_division=0)
 
 
-def aami_report(name, y_true, y_pred):
+def per_record_report(y_true, y_pred, records):
+    """One row per record (patient): its beats, and for S, V and F how many
+    it has, the sensitivity on them and how many of its beats of other
+    classes were called that class (false positives). In the inter-patient
+    split a class often comes mostly from one or two patients, and this
+    shows which ones decide the class metrics."""
+    y_true = np.asarray(y_true).astype(int)
+    y_pred = np.asarray(y_pred).astype(int)
+    records = np.asarray(records).astype(int)
+    rows = []
+    for record in np.unique(records):
+        in_record = records == record
+        row = {'Record': record, 'Beats': int(in_record.sum())}
+        for name in ('S', 'V', 'F'):
+            label = classes.index(name)
+            is_class = in_record & (y_true == label)
+            row[name] = int(is_class.sum())
+            row[f'{name} Se'] = (np.mean(y_pred[is_class] == label)
+                                 if is_class.any() else float('nan'))
+            row[f'{name} FP'] = int(np.sum(in_record & (y_true != label) & (y_pred == label)))
+        rows.append(row)
+    return pd.DataFrame(rows).set_index('Record')
+
+
+def aami_report(name, y_true, y_pred, records=None):
     """Returns (text, DataFrame) with the test metrics every classifier
-    reports; the DataFrame has one row per class.
+    reports; the DataFrame has one row per class. With records (the
+    MIT-BIH record of each beat), the text also has per_record_report().
 
     Per class, one-vs-rest from the confusion matrix (the AAMI EC57 / de
     Chazal metrics):
@@ -64,11 +89,16 @@ def aami_report(name, y_true, y_pred):
         f'Accuracy: {accuracy:.4f} (always predicting N: {always_normal:.4f})',
         f'Macro-F1 ({", ".join(SCORED_CLASSES)}): {macro_f1(y_true, y_pred):.4f}',
     ])
+    if records is not None:
+        by_record = per_record_report(y_true, y_pred, records)
+        text += ('\nPer record (Se = sensitivity on the record\'s beats of that class, '
+                 'FP = its beats of other classes called that class):\n'
+                 + by_record.to_string(float_format='{:.3f}'.format, na_rep='-'))
     return text, report
 
 
-def print_aami_report(name, y_true, y_pred):
+def print_aami_report(name, y_true, y_pred, records=None):
     """Prints aami_report() and returns its DataFrame."""
-    text, report = aami_report(name, y_true, y_pred)
+    text, report = aami_report(name, y_true, y_pred, records)
     print(text)
     return report

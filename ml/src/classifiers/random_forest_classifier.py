@@ -93,7 +93,7 @@ def main():
         print(f'  {name}: {importance:.4f}')
 
     test_predictions = forest_classifier.predict(test_features)
-    evaluation = print_aami_report('Random Forest', test_labels, test_predictions)
+    evaluation = print_aami_report('Random Forest', test_labels, test_predictions, test.records)
 
     model_path = Path("models/random_forest_classifier.pickle")
     model_path.parent.mkdir(parents=True, exist_ok=True)
