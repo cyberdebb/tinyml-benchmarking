@@ -10,6 +10,10 @@ project_directory = Path(__file__).resolve().parent
 src_directory = project_directory / 'src'
 classifiers_directory = src_directory / 'classifiers'
 models_directory = project_directory / 'models'
+# Every run's full output (training metrics included) is saved here, so it
+# doesn't have to be piped to a file (see TeeOutput). Not 'logs': that one
+# holds TensorBoard's files and clean_training_directories() deletes it.
+training_logs_directory = project_directory / 'training_logs'
 
 # Firmware directories
 esp32_firmware_directory = project_directory.parent / 'esp32_firmware'
@@ -288,18 +292,26 @@ def build_and_upload_firmware(model, firmware_directory):
 # Entry point
 # ---------------------------------------------------------------------------
 
-def main():
-    # With the output piped (e.g. '| Tee-Object treino.log'), Windows uses
-    # its ANSI code page (cp1252) for stdout, which can't encode characters
-    # like the Keras progress bar: replace them instead of crashing.
-    sys.stdout.reconfigure(errors='replace')
+class TeeOutput:
+    """Sends everything printed both to the console and to the log file."""
 
-    print('==================================================')
-    print('         TinyML Automated Pipeline Start          ')
-    print('==================================================')
+    def __init__(self, console, log_file):
+        self.console = console
+        self.log_file = log_file
 
+    def write(self, text):
+        self.console.write(text)
+        self.log_file.write(text)
+        return len(text)
+
+    def flush(self):
+        self.console.flush()
+        self.log_file.flush()
+
+
+def run_steps():
     # Comment or uncomment the steps you want to run!
-    
+
     # Step 1: train the models. Accepts 'cnn', 'mlp', 'rf' and/or 'svm'
     run_trainings(['cnn', 'mlp', 'rf', 'svm'])
 
@@ -312,9 +324,35 @@ def main():
     # Step 3: build and flash one model. Only one fits on the board at a time.
     # build_and_upload_firmware('cnn', esp32_firmware_directory)
 
-    print('==================================================')
-    print('        TinyML Automated Pipeline Finished!       ')
-    print('==================================================')
+
+def main():
+    # If the output is still piped (e.g. '| Tee-Object'), Windows uses its
+    # ANSI code page (cp1252) for stdout, which can't encode characters like
+    # the Keras progress bar: replace them instead of crashing. And piped
+    # stdout is block-buffered, so without line_buffering the output would
+    # show up in 8 KB chunks, minutes apart during training.
+    sys.stdout.reconfigure(errors='replace', line_buffering=True)
+
+    # The log file is always UTF-8, whatever the console encoding is.
+    training_logs_directory.mkdir(parents=True, exist_ok=True)
+    log_path = training_logs_directory / f'pipeline_{time.strftime("%Y%m%d_%H%M%S")}.log'
+    console = sys.stdout
+    with open(log_path, 'w', encoding='utf-8') as log_file:
+        sys.stdout = TeeOutput(console, log_file)
+        try:
+            print('==================================================')
+            print('         TinyML Automated Pipeline Start          ')
+            print('==================================================')
+            print(f'[PIPELINE] Saving the full output to {log_path}')
+
+            run_steps()
+
+            print('==================================================')
+            print('        TinyML Automated Pipeline Finished!       ')
+            print('==================================================')
+        finally:
+            print(f'[PIPELINE] Full output saved to {log_path}')
+            sys.stdout = console
 
 
 if __name__ == '__main__':
