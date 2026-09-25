@@ -8,7 +8,7 @@ files PlatformIO leaves in .pio/build/rf after 'pio run -e rf':
 
   - firmware.elf says which forest functions survived linking (the unused
     random_forest_predict_proba is removed by --gc-sections);
-  - the object file of tinyml_app_rf.cc has each function in its own
+  - the object file of model_rf.cc has each function in its own
     section (-ffunction-sections), so the size of the code sections of those
     functions -- plus, on the ESP32 (Xtensa), their .literal sections, where
     the float thresholds live -- is the forest's real footprint.
@@ -51,7 +51,10 @@ def measure_forest_flash_bytes(build_directory):
     (no build, no pyelftools, or an unexpected build layout)."""
     build_directory = Path(build_directory)
     elf_path = build_directory / 'firmware.elf'
-    objects = sorted(build_directory.glob('**/tinyml_app_rf.cc.o*'))
+    # model_rf.cc since the firmware refactoring, tinyml_app_rf.cc before
+    # (an old build can leave both objects behind: the current one wins).
+    objects = (sorted(build_directory.glob('**/model_rf.cc.o*'))
+               or sorted(build_directory.glob('**/tinyml_app_rf.cc.o*')))
     if not elf_path.exists() or len(objects) != 1:
         return None
     try:
