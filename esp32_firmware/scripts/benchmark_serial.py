@@ -38,13 +38,14 @@ dataset_directory = Path(__file__).resolve().parents[2] / 'ml'
 firmware_directory = Path(__file__).resolve().parents[1]
 results_directory = firmware_directory / 'results'
 
+from model_size import measure_forest_flash_bytes  # noqa: E402
+
 # The test split and the cache location come from the training code itself,
 # so the boards are always benchmarked on the same patients the models were
 # tested on.
 sys.path.insert(0, str(dataset_directory / 'src'))
 from load_data import TEST_RECORDS, cache_is_current, dataset_cache_path, select_records  # noqa: E402
 from metrics import SCORED_CLASS_IDS, aami_report  # noqa: E402
-from model_size import measure_forest_flash_bytes  # noqa: E402
 
 # Must match the classifier configs and the pipeline dataset_config.
 dataset_config = SimpleNamespace(feature='MLII', input_size=256)
@@ -249,7 +250,7 @@ def summary_text(model, y_true, y_predicted, records, inference_us, filter_us, m
 def rf_flash_size(estimated_bytes):
     """The forest is if/else code, so the board only reports an estimate
     (node count x 8 bytes). If the rf build is here (pio run -e rf), use the
-    real compiled size instead (ml/src/model_size.py)."""
+    real compiled size instead (model_size.py)."""
     measured = measure_forest_flash_bytes(firmware_directory / '.pio' / 'build' / 'rf')
     if measured is None:
         print('[WARNING] Could not measure the Random Forest size from .pio/build/rf '
