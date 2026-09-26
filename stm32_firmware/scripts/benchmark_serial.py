@@ -1,9 +1,9 @@
 """Sends ECG beats to the STM32 over UART and collects the predictions.
 
 Usage:
-    python src/benchmark_serial.py COM5 <model>              # whole DS2 test set
-    python src/benchmark_serial.py COM5 <model> --resume     # continue a stopped run
-    python src/benchmark_serial.py COM5 <model> --beats 500  # quick check on a sample
+    python scripts/benchmark_serial.py COM5 <model>              # whole DS2 test set
+    python scripts/benchmark_serial.py COM5 <model> --resume     # continue a stopped run
+    python scripts/benchmark_serial.py COM5 <model> --beats 500  # quick check on a sample
 
 By default every beat of the test set (DS2, the same patients the models were
 evaluated on in training) is sent, so the metrics printed here are the
@@ -38,13 +38,14 @@ dataset_directory = Path(__file__).resolve().parents[2] / 'ml'
 firmware_directory = Path(__file__).resolve().parents[1]
 results_directory = firmware_directory / 'results'
 
+from model_size import measure_forest_flash_bytes  # noqa: E402
+
 # The test split and the cache location come from the training code itself,
 # so the boards are always benchmarked on the same patients the models were
 # tested on.
 sys.path.insert(0, str(dataset_directory / 'src'))
 from load_data import TEST_RECORDS, cache_is_current, dataset_cache_path, select_records  # noqa: E402
 from metrics import SCORED_CLASS_IDS, aami_report  # noqa: E402
-from model_size import measure_forest_flash_bytes  # noqa: E402
 
 # Must match the classifier configs and the pipeline dataset_config.
 dataset_config = SimpleNamespace(feature='MLII', input_size=256)
@@ -64,7 +65,7 @@ def load_test_set():
     the band-pass filter is applied only at training/evaluation time on the
     host, never saved back to the cache. So the beats sent here over serial
     are raw, matching what the firmware itself filters on-device
-    (tinyml_app_<model>.cc, filter_sos) before running inference.
+    (model_<model>.cc, filter_sos) before running inference.
     """
     cache_file = dataset_cache_path(dataset_config.feature, dataset_config.input_size)
     if not cache_file.exists():
@@ -248,7 +249,7 @@ def summary_text(model, y_true, y_predicted, records, inference_us, filter_us, m
 def rf_flash_size(estimated_bytes):
     """The forest is if/else code, so the board only reports an estimate
     (node count x 8 bytes). If the rf build is here (pio run -e rf), use the
-    real compiled size instead (ml/src/model_size.py)."""
+    real compiled size instead (model_size.py)."""
     measured, problem = measure_forest_flash_bytes(firmware_directory / '.pio' / 'build' / 'rf')
     if measured is None:
         print(f'[WARNING] Could not measure the Random Forest size: {problem}. '
