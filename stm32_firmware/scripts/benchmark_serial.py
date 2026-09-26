@@ -1,9 +1,9 @@
 """Sends ECG beats to the STM32 over UART and collects the predictions.
 
 Usage:
-    python src/benchmark_serial.py COM5 <model>              # whole DS2 test set
-    python src/benchmark_serial.py COM5 <model> --resume     # continue a stopped run
-    python src/benchmark_serial.py COM5 <model> --beats 500  # quick check on a sample
+    python scripts/benchmark_serial.py COM5 <model>              # whole DS2 test set
+    python scripts/benchmark_serial.py COM5 <model> --resume     # continue a stopped run
+    python scripts/benchmark_serial.py COM5 <model> --beats 500  # quick check on a sample
 
 By default every beat of the test set (DS2, the same patients the models were
 evaluated on in training) is sent, so the metrics printed here are the
@@ -64,7 +64,7 @@ def load_test_set():
     the band-pass filter is applied only at training/evaluation time on the
     host, never saved back to the cache. So the beats sent here over serial
     are raw, matching what the firmware itself filters on-device
-    (tinyml_app_<model>.cc, filter_sos) before running inference.
+    (model_<model>.cc, filter_sos) before running inference.
     """
     cache_file = dataset_cache_path(dataset_config.feature, dataset_config.input_size)
     if not cache_file.exists():

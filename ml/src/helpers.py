@@ -78,7 +78,7 @@ def numeric_value(values, default=0.0):
 
 def beat_features(processed_signal, beat_time):
     # 0.6 s around the R peak (216 samples at 360 Hz): P wave, QRS and most
-    # of the T wave. Must match kFeatureWindow in tinyml_app_{mlp,rf,svm}.cc.
+    # of the T wave. Must match kFeatureWindow in model_{mlp,rf,svm}.cc.
     beat_window_seconds = 0.6
     beat_index = int(round(beat_time * sampling_rate))
     half_window = int(beat_window_seconds * sampling_rate / 2)
@@ -111,7 +111,7 @@ def beat_features(processed_signal, beat_time):
 def extract_neurokit_features(signals, rr, labels):
     """12 morphology features per beat (beat_features) followed by its RR
     intervals (load_data.RR_FEATURES). Same order as extract_features() +
-    the RR values in tinyml_app_{mlp,rf,svm}.cc."""
+    the RR values in model_{mlp,rf,svm}.cc."""
     feature_rows = []
     total_signals = len(signals)
 
