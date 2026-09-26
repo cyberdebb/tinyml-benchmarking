@@ -8,7 +8,7 @@ files PlatformIO leaves in .pio/build/rf after 'pio run -e rf':
 
   - firmware.elf says which forest functions survived linking (the unused
     random_forest_predict_proba is removed by --gc-sections);
-  - the object file of tinyml_app_rf.cc has each function in its own
+  - the object file of model_rf.cc has each function in its own
     section (-ffunction-sections), so the size of the code sections of those
     functions -- plus, on the ESP32 (Xtensa), their .literal sections, where
     the float thresholds live -- is the forest's real footprint.
@@ -47,21 +47,25 @@ def _section_sizes(path):
 
 
 def measure_forest_flash_bytes(build_directory):
-    """Flash bytes of the compiled forest, or None if it can't be measured
-    (no build, no pyelftools, or an unexpected build layout)."""
+    """(flash bytes of the compiled forest, None), or (None, reason) if it
+    can't be measured (no build, no pyelftools, or an unexpected layout)."""
     build_directory = Path(build_directory)
     elf_path = build_directory / 'firmware.elf'
-    objects = sorted(build_directory.glob('**/tinyml_app_rf.cc.o*'))
-    if not elf_path.exists() or len(objects) != 1:
-        return None
+    objects = sorted(build_directory.glob('**/model_rf.cc.o*'))
+    if not elf_path.exists():
+        return None, f'{elf_path} not found (run "pio run -e rf" in the firmware folder)'
+    if len(objects) != 1:
+        return None, f'expected one model_rf.cc.o under {build_directory}, found {len(objects)}'
     try:
         linked = {name: size for name, size in _elf_functions(elf_path).items()
                   if FOREST_NAME in name}
         sections = _section_sizes(objects[0])
-    except (ImportError, OSError, ValueError):
-        return None
+    except ImportError:
+        return None, 'pyelftools is not installed for this Python (python -m pip install pyelftools)'
+    except (OSError, ValueError) as error:
+        return None, f'could not read the build files ({error})'
     if not any('tinyml_forest_predict' in name for name in linked):
-        return None
+        return None, 'tinyml_forest_predict is not in firmware.elf (is it the rf build?)'
 
     total = 0
     for name, symbol_size in linked.items():
@@ -72,4 +76,4 @@ def measure_forest_flash_bytes(build_directory):
             total += symbol_size
             continue
         total += code + sections.get(f'.literal.{name}', 0)
-    return total
+    return total, None

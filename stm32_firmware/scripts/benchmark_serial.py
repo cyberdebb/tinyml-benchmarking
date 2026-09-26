@@ -249,11 +249,10 @@ def rf_flash_size(estimated_bytes):
     """The forest is if/else code, so the board only reports an estimate
     (node count x 8 bytes). If the rf build is here (pio run -e rf), use the
     real compiled size instead (ml/src/model_size.py)."""
-    measured = measure_forest_flash_bytes(firmware_directory / '.pio' / 'build' / 'rf')
+    measured, problem = measure_forest_flash_bytes(firmware_directory / '.pio' / 'build' / 'rf')
     if measured is None:
-        print('[WARNING] Could not measure the Random Forest size from .pio/build/rf '
-              '(build it here with "pio run -e rf", and pip install pyelftools); '
-              'reporting the node-count estimate.')
+        print(f'[WARNING] Could not measure the Random Forest size: {problem}. '
+              'Reporting the node-count estimate.')
         return {'model_bytes': estimated_bytes, 'size_note': ' (estimated from the node count)'}
     print(f'[DATA] Random Forest size measured from the build: {measured} bytes '
           f'(the node-count estimate was {estimated_bytes})')
