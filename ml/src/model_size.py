@@ -53,8 +53,14 @@ def measure_forest_flash_bytes(build_directory):
     elf_path = build_directory / 'firmware.elf'
     # model_rf.cc since the firmware refactoring, tinyml_app_rf.cc before
     # (an old build can leave both objects behind: the current one wins).
-    objects = (sorted(build_directory.glob('**/model_rf.cc.o*'))
-               or sorted(build_directory.glob('**/tinyml_app_rf.cc.o*')))
+    # PlatformIO's own builder (STM32) names the object model_rf.o, ESP-IDF's
+    # CMake build model_rf.cc.obj.
+    objects = []
+    for source in ('model_rf', 'tinyml_app_rf'):
+        objects = sorted({*build_directory.glob(f'**/{source}.o'),
+                          *build_directory.glob(f'**/{source}.cc.o*')})
+        if objects:
+            break
     if not elf_path.exists() or len(objects) != 1:
         return None
     try:
