@@ -13,6 +13,9 @@ files PlatformIO leaves in .pio/build/rf after 'pio run -e rf':
     functions -- plus, on the ESP32 (Xtensa), their .literal sections, where
     the float thresholds live -- is the forest's real footprint.
 
+On ARM (STM32) a function's symbol size already includes its literal pool,
+so if the object file can't be found the ELF alone is enough there.
+
 The firmware keeps the forest in its own function (tinyml_forest_predict,
 noinline) so it doesn't get mixed into classify(). Only needs pyelftools.
 """
@@ -23,19 +26,20 @@ FOREST_NAME = 'forest'
 
 
 def _elf_functions(path):
-    """{name: size} of the function symbols in an ELF file."""
+    """({name: size} of the function symbols in an ELF file, its machine)."""
     from elftools.elf.elffile import ELFFile
     from elftools.elf.sections import SymbolTableSection
 
     with open(path, 'rb') as handle:
         elf = ELFFile(handle)
+        machine = elf['e_machine']
         functions = {}
         for section in elf.iter_sections():
             if isinstance(section, SymbolTableSection):
                 for symbol in section.iter_symbols():
                     if symbol['st_info']['type'] == 'STT_FUNC' and symbol.name:
                         functions[symbol.name] = symbol['st_size']
-        return functions
+        return functions, machine
 
 
 def _section_sizes(path):
@@ -51,21 +55,26 @@ def measure_forest_flash_bytes(build_directory):
     can't be measured (no build, no pyelftools, or an unexpected layout)."""
     build_directory = Path(build_directory)
     elf_path = build_directory / 'firmware.elf'
-    objects = sorted(build_directory.glob('**/model_rf.cc.o*'))
+    # PlatformIO names it model_rf.cc.o, ESP-IDF (CMake) model_rf.cc.obj.
+    objects = sorted(path for path in build_directory.rglob('model_rf*')
+                     if path.suffix in ('.o', '.obj'))
     if not elf_path.exists():
         return None, f'{elf_path} not found (run "pio run -e rf" in the firmware folder)'
-    if len(objects) != 1:
-        return None, f'expected one model_rf.cc.o under {build_directory}, found {len(objects)}'
     try:
-        linked = {name: size for name, size in _elf_functions(elf_path).items()
-                  if FOREST_NAME in name}
-        sections = _section_sizes(objects[0])
+        functions, machine = _elf_functions(elf_path)
+        sections = _section_sizes(objects[0]) if len(objects) == 1 else {}
     except ImportError:
         return None, 'pyelftools is not installed for this Python (python -m pip install pyelftools)'
     except (OSError, ValueError) as error:
         return None, f'could not read the build files ({error})'
+    linked = {name: size for name, size in functions.items() if FOREST_NAME in name}
     if not any('tinyml_forest_predict' in name for name in linked):
         return None, 'tinyml_forest_predict is not in firmware.elf (is it the rf build?)'
+    if len(objects) != 1 and machine != 'EM_ARM':
+        # Without the object file the .literal sections (the thresholds on
+        # Xtensa) can't be counted.
+        found = ', '.join(str(path) for path in objects) or 'none'
+        return None, f'expected one model_rf object file under {build_directory} (found: {found})'
 
     total = 0
     for name, symbol_size in linked.items():
