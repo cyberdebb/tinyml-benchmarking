@@ -13,7 +13,6 @@ from keras.layers import (
     Activation,
     BatchNormalization,
     Conv1D,
-    DepthwiseConv1D,
     Dense,
     Dropout,
     GlobalAveragePooling1D,
@@ -36,7 +35,7 @@ output_directory = Path('models')
 # ---------------------------------------------------------------------------
 # Model
 # ---------------------------------------------------------------------------
-# MobileNet 1D
+# Compact 1D pre-activation ResNet.
 #
 # Changes compared to the previous version, all aimed at fitting on an MCU:
 #   - fewer filters (16 -> 64 instead of 32 -> 256)
@@ -61,89 +60,54 @@ output_directory = Path('models')
 # (previous version: ~8M parameters, ~32 MB in float32).
 # ---------------------------------------------------------------------------
 
-def mobilenet_block(layer, filters, strides, config, expansion=2):
-    """
-    Inverted Residual Block (baseado no MobileNetV2).
-    Utiliza Depthwise Separable Convolutions para reduzir drasticamente os parâmetros.
-    """
-    in_filters = layer.shape[-1]
-    
-    # 1. Expansion phase (Pointwise 1x1) - expande o número de canais internos
-    if expansion > 1:
-        x = Conv1D(
-            filters=in_filters * expansion,
-            kernel_size=1,
-            padding='same',
-            use_bias=False, # Não precisamos de bias antes do BatchNorm
-            kernel_initializer='he_normal'
-        )(layer)
-        x = BatchNormalization()(x)
-        x = Activation('relu')(x)
-    else:
-        x = layer
-
-    # 2. Depthwise Convolution - aplica filtros espacialmente por canal
-    x = DepthwiseConv1D(
-        kernel_size=config.kernel_size,
-        strides=strides,
-        padding='same',
-        use_bias=False,
-        depthwise_initializer='he_normal'
-    )(x)
-    x = BatchNormalization()(x)
-    x = Activation('relu')(x)
-    
-    if config.drop_rate > 0:
-        x = Dropout(config.drop_rate)(x)
-
-    # 3. Projection phase (Pointwise 1x1) - Linear Bottleneck (Sem ReLU no final)
-    x = Conv1D(
+def conv_layer(filters, kernel_size, strides=1):
+    return Conv1D(
         filters=filters,
-        kernel_size=1,
+        kernel_size=kernel_size,
         padding='same',
-        use_bias=False,
-        kernel_initializer='he_normal'
-    )(x)
-    x = BatchNormalization()(x)
-
-    # Residual Connection (apenas se a resolução temporal e número de canais baterem)
-    if strides == 1 and in_filters == filters:
-        shortcut = layer
-        return add([shortcut, x])
-    else:
-        # Se os canais mudaram, fazemos um atalho 1x1 linear para igualar o shape
-        shortcut = Conv1D(
-            filters=filters,
-            kernel_size=1,
-            strides=strides,
-            padding='same',
-            use_bias=False,
-            kernel_initializer='he_normal'
-        )(layer)
-        shortcut = BatchNormalization()(shortcut)
-        return add([shortcut, x])
+        strides=strides,
+        kernel_initializer='he_normal',
+    )
 
 
 def first_conv_block(inputs, config):
-    """
-    A primeira camada é uma Conv1D padrão para extrair características iniciais,
-    seguida do primeiro bloco MobileNet (geralmente sem expansão para economizar recursos).
-    """
-    layer = Conv1D(
-        filters=config.base_filters, 
-        kernel_size=config.kernel_size,
-        padding='same',
-        strides=1,
-        use_bias=False,
-        kernel_initializer='he_normal'
-    )(inputs)
+    layer = conv_layer(config.base_filters, config.kernel_size)(inputs)
     layer = BatchNormalization()(layer)
     layer = Activation('relu')(layer)
 
-    # Primeiro bloco MobileNet, expansion=1 (Linear bottleneck)
-    layer = mobilenet_block(layer, config.base_filters, strides=1, config=config, expansion=1)
-    
-    return layer
+    shortcut = layer
+
+    layer = conv_layer(config.base_filters, config.kernel_size)(layer)
+    layer = BatchNormalization()(layer)
+    layer = Activation('relu')(layer)
+    layer = Dropout(config.drop_rate)(layer)
+    layer = conv_layer(config.base_filters, config.kernel_size)(layer)
+    return add([shortcut, layer])
+
+
+def residual_block(layer, filters, strides, config):
+    in_filters = layer.shape[-1]
+
+    # Projection shortcut when the shape changes, identity otherwise.
+    if strides != 1 or in_filters != filters:
+        shortcut = Conv1D(
+            filters=filters,
+            kernel_size=1,
+            padding='same',
+            strides=strides,
+            kernel_initializer='he_normal',
+        )(layer)
+    else:
+        shortcut = layer
+
+    layer = BatchNormalization()(layer)
+    layer = Activation('relu')(layer)
+    layer = conv_layer(filters, config.kernel_size, strides)(layer)
+    layer = BatchNormalization()(layer)
+    layer = Activation('relu')(layer)
+    layer = Dropout(config.drop_rate)(layer)
+    layer = conv_layer(filters, config.kernel_size)(layer)
+    return add([shortcut, layer])
 
 
 def main_loop_blocks(layer, config):
@@ -156,10 +120,7 @@ def main_loop_blocks(layer, config):
                 filters *= 2
         else:
             strides = 1
-        
-        # Aplicamos o bloco MobileNet com fator de expansão (padrão 2x ou 4x em V2, usamos 2 para ficar ultracompacto)
-        layer = mobilenet_block(layer, filters, strides, config, expansion=2)
-        
+        layer = residual_block(layer, filters, strides, config)
     return layer
 
 
@@ -167,18 +128,21 @@ def output_block(layer, inputs, rr_input, config):
     layer = BatchNormalization()(layer)
     layer = Activation('relu')(layer)
     layer = GlobalAveragePooling1D()(layer)
-    
-    # RR branch
+    # RR branch: BatchNormalization puts the RR features on the same scale
+    # as the morphology features, and the Dense layer lets the network build
+    # its own combinations of them (e.g. early beat AND followed by a pause).
     rr_layer = BatchNormalization()(rr_input)
     rr_layer = Dense(config.rr_units, activation='relu')(rr_layer)
     layer = concatenate([layer, rr_layer])
-    
     layer = Dense(config.dense_units, activation='relu')(layer)
     outputs = Dense(len(classes), activation='softmax')(layer)
-    
-    model = Model(inputs=[inputs, rr_input], outputs=outputs, name='cnn_classifier_mn')
+    # The .tflite orders its inputs by name, not in this order:
+    # model_cnn.cc and evaluate_tflite() find each input by size, and
+    # the calibration data is fed by name (export_model).
+    model = Model(inputs=[inputs, rr_input], outputs=outputs, name='cnn_classifier')
 
     model.compile(
+        # The previous learning rate (0.1) is far too high for Adam.
         optimizer=Adam(learning_rate=config.learning_rate),
         loss='sparse_categorical_crossentropy',
         metrics=['accuracy'],
@@ -188,15 +152,13 @@ def output_block(layer, inputs, rr_input, config):
 
 
 def cnn_model(config):
-    print('[MODEL] Building MobileNet-1D model...')
+    print('[MODEL] Building CNN model...')
     inputs = Input(shape=(config.input_size, 1), name='input')
     rr_input = Input(shape=(len(RR_FEATURES),), name='rr')
-    
     layer = first_conv_block(inputs, config)
     layer = main_loop_blocks(layer, config)
     model = output_block(layer, inputs, rr_input, config)
-    
-    print(f'[MODEL] MobileNet model built and compiled ({model.count_params():,} parameters).')
+    print(f'[MODEL] CNN model built and compiled ({model.count_params():,} parameters).')
     return model
 
 
@@ -208,8 +170,8 @@ def export_model(model, train_inputs):
     print('[EXPORT] Starting model export...')
     output_directory.mkdir(parents=True, exist_ok=True)
 
-    keras_path = output_directory / 'cnn_classifier_mn.keras'
-    tflite_path = output_directory / 'cnn_classifier_mn.tflite'
+    keras_path = output_directory / 'cnn_classifier.keras'
+    tflite_path = output_directory / 'cnn_classifier.tflite'
     model.save(keras_path)
 
     # OPIMIZATIONS
@@ -244,6 +206,7 @@ def normalize_beats(X):
 
 
 def prepare_inputs(dataset):
+    """Model inputs ([beats, rr], in the model's input order) and labels."""
     beats = np.expand_dims(normalize_beats(dataset.X), axis=2)
     rr = np.asarray(dataset.rr, dtype=np.float32)
     if np.any(np.isnan(beats)) or np.any(np.isnan(rr)) or np.any(np.isnan(dataset.y)):
@@ -257,7 +220,7 @@ class ValidationMacroF1(Callback):
     separates the classes on the validation patients. val_loss follows the
     class-weighted loss, and accuracy is dominated by N (always answering N
     already scores ~0.89). Must come before the callbacks that read it."""
-        
+
     def __init__(self, inputs, y):
         super().__init__()
         self.inputs = inputs
@@ -296,7 +259,7 @@ def build_training_callbacks(config, validation_inputs, yval):
             write_images=True,
         ),
         ModelCheckpoint(
-            str(output_directory / 'cnn_classifier_mn.keras'),
+            str(output_directory / 'cnn_classifier.keras'),
             monitor='val_macro_f1',
             mode='max',
             save_best_only=True,
@@ -382,8 +345,8 @@ def main():
         min_lr=5e-5,
         checkpoint_path=None,
         resume_epoch=0,
-        trained_model=str(output_directory / 'cnn_classifier_mn.keras'),
-        export_only=False,
+        trained_model=str(output_directory / 'cnn_classifier.keras'),
+        export_only=False,  # True: skip training and re-export trained_model
     )
     print('[CONFIG] CNN configuration:')
     print(vars(config))
