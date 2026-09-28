@@ -10,13 +10,23 @@ from load_data import SCORED_CLASSES, classes
 
 SCORED_CLASS_IDS = [classes.index(name) for name in SCORED_CLASSES]
 
+# Second macro average in the reports, without F. Almost every F beat of the
+# test set (DS2) is from one record (213: 362 of 388), and almost every F of
+# the training set from another (208), so F measures how much those two
+# patients look alike, and with 1/4 of the weight it can decide the ranking
+# of the models by itself. Only reported: the models are still trained and
+# selected on SCORED_CLASSES.
+NSV_CLASSES = ('N', 'S', 'V')
+NSV_CLASS_IDS = [classes.index(name) for name in NSV_CLASSES]
 
-def macro_f1(y_true, y_pred):
-    """Mean F1 over SCORED_CLASSES (N, S, V, F). The metric the models are
-    compared on and the one used to pick the best epoch/checkpoint: accuracy
-    is dominated by N (always answering N already scores ~0.89 on DS2)."""
+
+def macro_f1(y_true, y_pred, labels=SCORED_CLASS_IDS):
+    """Mean F1 over SCORED_CLASSES (N, S, V, F), or over the given class ids.
+    The metric the models are compared on and the one used to pick the best
+    epoch/checkpoint: accuracy is dominated by N (always answering N already
+    scores ~0.89 on DS2)."""
     return f1_score(np.asarray(y_true).astype(int), np.asarray(y_pred).astype(int),
-                    labels=SCORED_CLASS_IDS, average='macro', zero_division=0)
+                    labels=labels, average='macro', zero_division=0)
 
 
 def per_record_report(y_true, y_pred, records):
@@ -55,7 +65,8 @@ def aami_report(name, y_true, y_pred, records=None):
       FPR (false positive rate)   = FP / (FP + TN)
       F1                          = 2TP / (2TP + FP + FN)
     plus the accuracy, the accuracy of always answering N (the baseline the
-    accuracy has to beat) and the macro-F1 over SCORED_CLASSES.
+    accuracy has to beat) and the macro-F1 over SCORED_CLASSES and over
+    NSV_CLASSES.
     """
     y_true = np.asarray(y_true).astype(int)
     y_pred = np.asarray(y_pred).astype(int)
@@ -88,6 +99,7 @@ def aami_report(name, y_true, y_pred, records=None):
         report.to_string(float_format='{:.4f}'.format),
         f'Accuracy: {accuracy:.4f} (always predicting N: {always_normal:.4f})',
         f'Macro-F1 ({", ".join(SCORED_CLASSES)}): {macro_f1(y_true, y_pred):.4f}',
+        f'Macro-F1 ({", ".join(NSV_CLASSES)}): {macro_f1(y_true, y_pred, NSV_CLASS_IDS):.4f}',
     ])
     if records is not None:
         by_record = per_record_report(y_true, y_pred, records)
