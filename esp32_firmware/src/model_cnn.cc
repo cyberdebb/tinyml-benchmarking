@@ -26,7 +26,7 @@ namespace {
 
 constexpr char TAG[] = "tinyml";
 
-constexpr size_t kArenaSize = 128 * 1024;
+constexpr size_t kArenaSize = 128;
 
 uint8_t *tensor_arena = nullptr;
 size_t arena_size = 0;
