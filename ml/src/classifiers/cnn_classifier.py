@@ -54,7 +54,7 @@ output_directory = Path('models')
 #     features)
 #   - each beat is standardized (zero mean, unit variance) before the
 #     network, so amplitude differences between patients/electrodes don't
-#     dominate (normalize_beats, and the same step in tinyml_app_cnn.cc)
+#     dominate (normalize_beats, and the same step in model_cnn.cc)
 #
 # Resulting model: roughly 100-150k parameters, ~150 KB after int8 quantization
 # (previous version: ~8M parameters, ~32 MB in float32).
@@ -137,7 +137,7 @@ def output_block(layer, inputs, rr_input, config):
     layer = Dense(config.dense_units, activation='relu')(layer)
     outputs = Dense(len(classes), activation='softmax')(layer)
     # The .tflite orders its inputs by name, not in this order:
-    # tinyml_app_cnn.cc and evaluate_tflite() find each input by size, and
+    # model_cnn.cc and evaluate_tflite() find each input by size, and
     # the calibration data is fed by name (export_model).
     model = Model(inputs=[inputs, rr_input], outputs=outputs, name='cnn_classifier')
 
@@ -198,7 +198,7 @@ def export_model(model, train_inputs):
 
 def normalize_beats(X):
     """Standardizes each beat to zero mean and unit variance. Must match
-    normalize_beat() in tinyml_app_cnn.cc."""
+    normalize_beat() in model_cnn.cc."""
     X = np.asarray(X, dtype=np.float32)
     mean = X.mean(axis=1, keepdims=True)
     std = X.std(axis=1, keepdims=True)

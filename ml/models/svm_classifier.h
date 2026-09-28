@@ -9,6 +9,8 @@
 #define SVM_GAMMA 0.0625f
 #define SVM_SV_SCALE 783.0f
 #define SVM_DUAL_COEF_SCALE 303.0f
+#define SVM_SV_INV_SCALE (1.0f / SVM_SV_SCALE)
+#define SVM_DUAL_COEF_INV_SCALE (1.0f / SVM_DUAL_COEF_SCALE)
 static const int32_t svm_n_support[SVM_CLASS_COUNT] = {1055,166,484,84,8};
 static const int32_t svm_support_start[SVM_CLASS_COUNT] = {0,1055,1221,1705,1789};
 static const int16_t svm_support_vectors[SVM_SUPPORT_VECTOR_COUNT][SVM_FEATURE_COUNT] = {
@@ -1823,7 +1825,7 @@ static inline int svm_predict(const float *features) {
     for (int k = 0; k < SVM_SUPPORT_VECTOR_COUNT; ++k) {
         float distance = 0.0f;
         for (int f = 0; f < SVM_FEATURE_COUNT; ++f) {
-            float delta = features[f] - (float)svm_support_vectors[k][f] / SVM_SV_SCALE;
+            float delta = features[f] - (float)svm_support_vectors[k][f] * SVM_SV_INV_SCALE;
             distance += delta * delta;
         }
         kvalue[k] = expf(-SVM_GAMMA * distance);
@@ -1839,10 +1841,10 @@ static inline int svm_predict(const float *features) {
             const int count_j = svm_n_support[j];
             float sum = svm_intercept[pair];
             for (int k = 0; k < count_i; ++k) {
-                sum += ((float)svm_dual_coef[j - 1][start_i + k] / SVM_DUAL_COEF_SCALE) * kvalue[start_i + k];
+                sum += ((float)svm_dual_coef[j - 1][start_i + k] * SVM_DUAL_COEF_INV_SCALE) * kvalue[start_i + k];
             }
             for (int k = 0; k < count_j; ++k) {
-                sum += ((float)svm_dual_coef[i][start_j + k] / SVM_DUAL_COEF_SCALE) * kvalue[start_j + k];
+                sum += ((float)svm_dual_coef[i][start_j + k] * SVM_DUAL_COEF_INV_SCALE) * kvalue[start_j + k];
             }
             if (sum > 0.0f) ++votes[i]; else ++votes[j];
         }
