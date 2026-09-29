@@ -6,6 +6,9 @@
 # pio run -e mlp -t upload
 # pio run -e rf -t upload
 # pio run -e svm -t upload
+#
+# Current/energy test firmware (power_logger/README.md):
+# pio run -e cnn_energy -t upload   (same for mlp, rf, svm)
 
 if(NOT DEFINED TINYML_MODEL)
     set(TINYML_MODEL "cnn")
@@ -27,10 +30,18 @@ else()
     message(FATAL_ERROR "TINYML_MODEL invalido: ${TINYML_MODEL} (use cnn, mlp, rf ou svm)")
 endif()
 
+# energy_app.cc replaces the serial DS2 benchmark app (tinyml_app.cc) in the
+# <model>_energy environments.
+if(TINYML_ENERGY)
+    set(app_source "energy_app.cc")
+else()
+    set(app_source "tinyml_app.cc")
+endif()
+
 idf_component_register(
     SRCS
         "main.c"
-        "tinyml_app.cc"
+        "${app_source}"
         "tinyml_common.cc"
         "beat_features.cc"
         "${model_source}"
@@ -39,7 +50,8 @@ idf_component_register(
     REQUIRES
         espressif__esp-tflite-micro
         esp_driver_uart
+        esp_driver_gpio
 )
 
 target_compile_definitions(${COMPONENT_LIB} PRIVATE ${model_define})
-message(STATUS "TinyML model: ${TINYML_MODEL}")
+message(STATUS "TinyML model: ${TINYML_MODEL} (app: ${app_source})")

@@ -1,29 +1,29 @@
 // Power logger for the TinyML benchmark.
 //
 // Runs on a second ESP32 ("ESP32 extra") with an INA226 in series with the
-// 3V3 rail of the ESP32-S3 that runs the models (esp32_firmware):
+// supply of the board under test (DUT): the 3V3 pin of the ESP32-S3, or the
+// MCU side of the IDD jumper JP5 of the NUCLEO-F767ZI (power_logger/README.md):
 //
-//   ESP32 extra 3V3 -> INA226 IN+ -> shunt -> IN- (= VBS) -> ESP32-S3 3V3
+//   ESP32 extra 3V3 -> INA226 IN+ -> shunt -> IN- (= VBS) -> DUT supply
 //   ESP32 extra GPIO21/GPIO22 -> INA226 SDA/SCL, ALERT not connected
+//   DUT sync pin -> ESP32 extra GPIO4 (AUTO mode)
 //
-// VBS is tied to IN-, so the bus voltage is the voltage at the DUT pin and
-// P = V_bus * I is the power drawn by the ESP32-S3 alone.
+// VBS is tied to IN-, so the bus voltage is the voltage at the DUT and
+// P = V_bus * I is the power drawn by the DUT alone.
 //
 // Metrics
 // -------
-// Baseline subtraction: the DUT is first measured at rest (BASELINE), then
-// while it runs N inferences (START ... STOP N). Integrating over the run
-// window of length T:
+// Baseline subtraction: the DUT is measured at rest (idle) and while it runs
+// N inferences back to back. Integrating over a window of length T that
+// contains the inferences:
 //
 //   E_total = integral of P dt
 //   E_net   = E_total - P_idle * T      (energy above the idle floor)
 //   E_inf   = E_net / N                 (energy per inference, Einf)
 //
 // Idle time inside the window adds ~0 to E_net, so the window only has to
-// enclose the burst of inferences: it does not need to be aligned with it,
-// and the host can open/close it over serial (no sync wire). The same
-// subtraction cancels the INA226 offset error and the static current of the
-// board (LDO, LEDs, ...).
+// enclose the inferences, not be aligned with them. The same subtraction
+// cancels the INA226 offset error and the static current of the board.
 //
 // Instantaneous current (Iinst), by block averaging: the INA226 gives one
 // shunt reading per conversion (~0.34 ms with the defaults). That profiles
@@ -31,11 +31,27 @@
 // inference. So the current is reported as averages over blocks:
 //   - the stream (STREAM 1): mean current over every BLOCK conversions,
 //     as a time series (profile of one inference for slow models);
-//   - the run window: charge above idle Q_net = integral of (I - I_idle) dt,
-//     and, given the DUT-measured inference time t_inf, the mean current of
-//     one inference above idle dI_inf = Q_net / (N * t_inf). The DUT runs the
-//     N inferences back to back, so that block holds enough conversions even
-//     when one inference is shorter than a conversion.
+//   - per burst: charge above idle Q_net = integral of (I - I_idle) dt over
+//     the N back-to-back inferences, and the mean current of one inference
+//     above idle dI_inf = Q_net / (N * t_inf) (absolute: I_inf = I_idle +
+//     dI_inf). The burst holds thousands of conversions even when one
+//     inference is shorter than a conversion.
+//
+// AUTO mode (current/energy test)
+// -------------------------------
+// The DUT runs the energy firmware (<model>_energy environments): it has no
+// serial link during the test, and loops "idle 5 s -> burst of inferences
+// 3 s". It toggles its sync pin right before each inference; this logger
+// counts both edges in hardware (PCNT), which gives N exactly and tells
+// where each burst is:
+//   - a burst starts at the first edge after an idle period, and ends when
+//     no edge came for `gap` ms (longer than one inference);
+//   - its window starts kPreSamples conversions before the first edge and
+//     ends at that gap (idle, removed by the subtraction);
+//   - the idle baseline of each burst is the idle period right before it,
+//     so slow drifts (temperature, supply) cancel burst by burst;
+//   - t_inf = (last edge - first edge) / (N - 1).
+// One BURST line is printed per burst.
 //
 // Serial protocol (UART0 at the console baud rate, 921600, see
 // sdkconfig.defaults; one command per line, case-insensitive)
@@ -49,21 +65,30 @@
 //   RSHUNT <ohms>           shunt resistor (default 0.1, "R100")
 //   BLOCK <n>               conversions per stream point (default 1)
 //   STREAM <0|1>            stream Iinst points while a window is open
-//   BASELINE [ms]           measure the DUT at rest (default 3000 ms)
-//   START                   open a run window
-//   STOP <n> [t_inf_us]     close it: n inferences ran inside it; t_inf_us
-//                           is the per-inference time the DUT reported
-//   ABORT                   drop the open window
+//   AUTO <bursts> [gap_ms]  measure the next <bursts> bursts of the DUT
+//                           (0 = until ABORT), end-of-burst gap (1000 ms)
+//   BASELINE [ms]           manual mode: measure the DUT at rest (3000 ms)
+//   START                   manual mode: open a run window
+//   STOP <n> [t_inf_us]     manual mode: close it; n inferences ran inside
+//                           it, t_inf_us is the per-inference time
+//   ABORT                   drop the open window / stop AUTO
 //
 // Answers: OK,<command> / ERR,<reason>. Lines starting with '#' are for
 // people only. Data lines (COLUMNS lines list their fields):
+//   BURST,index,n_inf,t_inf_us,busy_us,window_us,samples,missed,
+//         stream_dropped,idle_us,idle_samples,I_idle_mA,V_idle_V,P_idle_mW,
+//         P_idle_std_mW,I_mean_mA,V_mean_V,P_mean_mW,E_total_uJ,E_idle_uJ,
+//         E_net_uJ,E_inf_uJ,E_inf_sigma_uJ,dI_inf_mA,dP_inf_mW,I_inf_mA,
+//         P_inf_mW
+//   AUTO_DONE,bursts
 //   BASELINE,window_us,samples,missed,I_mA,V_V,P_mW,P_std_mW,E_uJ
 //   RESULT,n_inf,t_inf_us,window_us,samples,missed,stream_dropped,
 //          I_mean_mA,V_mean_V,P_mean_mW,E_total_uJ,I_idle_mA,P_idle_mW,
 //          E_idle_uJ,E_net_uJ,E_inf_uJ,E_inf_sigma_uJ,dI_window_mA,
 //          dI_inf_mA,dP_inf_mW
-//   I,t_us,I_mA,dI_mA,P_mW    (stream; t from window start, block middle)
-// Values that can't be computed (no baseline, n = 0, no t_inf) are "nan".
+//   I,window,t_us,I_mA,P_mW   (stream; window = burst index in AUTO, t from
+//                             the window start, at the block middle)
+// Values that can't be computed (no baseline, n < 2, ...) are "nan".
 
 #include <atomic>
 #include <cmath>
@@ -73,7 +98,9 @@
 #include <cstring>
 #include <strings.h>
 
+#include "driver/gpio.h"
 #include "driver/i2c_master.h"
+#include "driver/pulse_cnt.h"
 #include "driver/uart.h"
 #include "driver/uart_vfs.h"
 #include "esp_timer.h"
@@ -96,6 +123,16 @@ constexpr i2c_port_num_t kI2cPort = I2C_NUM_0;
 constexpr uint32_t kI2cClockHz = 400000;
 constexpr int kI2cProbeTimeoutMs = 50;
 
+// Sync input from the DUT (toggles before each inference). No pull
+// resistor: the DUT drives it, and a pull would load the DUT pin with a
+// current that changes with the pin level, inside the measurement.
+constexpr gpio_num_t kSyncPin = GPIO_NUM_4;
+// Pulses shorter than this are ringing, not inferences (the shortest
+// inference is ~100 us).
+constexpr uint32_t kSyncGlitchNs = 1000;
+constexpr int kPcntHighLimit = 32767;
+constexpr int kPcntLowLimit = -32768;
+
 constexpr uart_port_t kUart = UART_NUM_0;
 constexpr int kUartRxBufferBytes = 1024;
 // Room for the stream: uart_write_bytes() only blocks once it is full.
@@ -114,9 +151,26 @@ constexpr uint16_t kDefaultShuntTimeUs = 204;
 constexpr uint32_t kDefaultBaselineMs = 3000;
 constexpr uint32_t kMaxWindowMs = 10u * 60u * 1000u;
 
-constexpr size_t kStreamQueueLength = 2048;
-// Stream points printed per pass of the command loop, so commands are still read when
-// the stream outruns the UART.
+// AUTO: end of a burst = no sync edge for this long. Must be longer than
+// the slowest inference and shorter than the DUT idle period (5 s).
+constexpr uint32_t kDefaultGapMs = 1000;
+constexpr uint32_t kMinGapMs = 50;
+constexpr uint32_t kMaxGapMs = 4000;
+// Conversions before the first edge that go into the burst window (and not
+// into the idle baseline): the first inference may start inside the
+// conversion before the one where its edge is seen.
+constexpr int kPreSamples = 4;
+// An idle baseline shorter than this is reported as nan.
+constexpr uint32_t kMinIdleSamples = 100;
+constexpr size_t kBurstQueueLength = 8;
+
+// A 3 s burst at one conversion per ~344 us is ~9000 points: the queue
+// should hold a whole burst at BLOCK 1 while the UART catches up during
+// idle. The largest size that fits in one heap block is used; with a
+// smaller queue, use BLOCK 2 or more for the profile of long bursts.
+constexpr size_t kStreamQueueLengths[] = {10000, 6000, 4000, 2048, 512};
+// Stream points printed per pass of the command loop, so commands are still
+// read when the stream outruns the UART.
 constexpr int kStreamPrintBudget = 64;
 constexpr size_t kCommandSize = 128;
 // A window whose end passed this long ago without a new conversion is
@@ -158,6 +212,7 @@ struct Accumulator {
 
 enum class WindowKind : uint8_t { kNone, kBaseline, kRun };
 
+// Manual mode window (BASELINE, START/STOP).
 struct Window {
     WindowKind kind;
     uint32_t id;
@@ -172,6 +227,17 @@ struct StreamPoint {
     uint32_t time_us;  // block middle, from window start
     float current_ma;
     float power_mw;
+};
+
+// One AUTO burst, from the sampler to the command task.
+struct BurstRecord {
+    uint32_t index;
+    uint32_t inferences;  // sync edges
+    int64_t first_edge_us;
+    int64_t last_edge_us;
+    uint32_t stream_dropped;
+    Accumulator idle;    // idle period right before the burst
+    Accumulator window;  // burst + the end-of-burst gap
 };
 
 struct ConfigRequest {
@@ -192,7 +258,9 @@ struct Baseline {
 
 Ina226 ina;
 i2c_master_bus_handle_t i2c_bus = nullptr;
+pcnt_unit_handle_t sync_counter = nullptr;
 QueueHandle_t stream_queue = nullptr;
+QueueHandle_t burst_queue = nullptr;
 
 // Guards everything the sampler and the command task both touch below.
 portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;
@@ -203,6 +271,11 @@ int64_t latest_us = 0;
 bool config_pending = false;
 bool config_ok = false;
 ConfigRequest config_request = {};
+// AUTO settings; a new generation makes the sampler restart AUTO.
+bool auto_enabled = false;
+uint32_t auto_generation = 0;
+uint32_t auto_target = 0;  // bursts, 0 = no limit
+int64_t auto_gap_us = 0;
 
 // Written by the command task only while no window is open.
 std::atomic<float> shunt_ohms{kDefaultShuntOhms};
@@ -214,12 +287,10 @@ std::atomic<uint32_t> total_samples{0};
 std::atomic<uint32_t> total_missed{0};
 std::atomic<uint32_t> i2c_errors{0};
 std::atomic<uint32_t> stream_dropped{0};
+std::atomic<uint32_t> bursts_dropped{0};
 
 // Command task only.
 Baseline baseline = {};
-// Window whose stream points are printed; points of an aborted window
-// that reach the queue late are dropped.
-uint32_t stream_window_id = 0;
 uint32_t run_inferences = 0;
 float run_inference_us = 0.0f;
 
@@ -284,13 +355,18 @@ void push_block()
     block.energy = 0.0;
 }
 
+void start_block(uint32_t window_id, int64_t window_start_us)
+{
+    block = {};
+    block.window_id = window_id;
+    block.window_start_us = window_start_us;
+}
+
 void add_to_block(uint32_t window_id, int64_t window_start_us, int64_t from_us,
                   const Sample &sample, double dt_us)
 {
     if (block.window_id != window_id) {
-        block = {};
-        block.window_id = window_id;
-        block.window_start_us = window_start_us;
+        start_block(window_id, window_start_us);
     }
     if (block.count == 0) {
         block.start_us = from_us;
@@ -304,17 +380,10 @@ void add_to_block(uint32_t window_id, int64_t window_start_us, int64_t from_us,
     }
 }
 
-void handle_sample(int64_t now_us, int64_t previous_us, const Sample &sample)
+// Manual windows (BASELINE, START/STOP).
+void manual_window_sample(int64_t now_us, int64_t previous_us, const Sample &sample,
+                          uint32_t missed)
 {
-    const uint32_t nominal_us = period_us.load(std::memory_order_relaxed);
-    const int64_t gap_us = now_us - previous_us;
-    uint32_t missed = 0;
-    if (nominal_us > 0 && gap_us * 2 > static_cast<int64_t>(nominal_us) * 3) {
-        missed = static_cast<uint32_t>((gap_us + nominal_us / 2) / nominal_us) - 1;
-    }
-    total_samples.fetch_add(1, std::memory_order_relaxed);
-    total_missed.fetch_add(missed, std::memory_order_relaxed);
-
     bool closing = false;
     bool streaming = false;
     uint32_t window_id = 0;
@@ -323,8 +392,6 @@ void handle_sample(int64_t now_us, int64_t previous_us, const Sample &sample)
     double dt_us = 0.0;
 
     portENTER_CRITICAL(&lock);
-    latest = sample;
-    latest_us = now_us;
     if (window.kind != WindowKind::kNone && !window.closed) {
         window_id = window.id;
         window_start_us = window.start_us;
@@ -345,8 +412,8 @@ void handle_sample(int64_t now_us, int64_t previous_us, const Sample &sample)
         add_to_block(window_id, window_start_us, from_us, sample, dt_us);
     }
     if (closing) {
-        // The last partial block goes in the queue before the command task can see
-        // the window closed, so it is printed before the result.
+        // The last partial block goes in the queue before the command task
+        // can see the window closed, so it is printed before the result.
         if (block.window_id == window_id) {
             push_block();
         }
@@ -356,6 +423,197 @@ void handle_sample(int64_t now_us, int64_t previous_us, const Sample &sample)
         }
         portEXIT_CRITICAL(&lock);
     }
+}
+
+// AUTO mode state; sampler task only.
+enum class AutoPhase : uint8_t { kOff, kSettle, kIdle, kBurst };
+
+struct PendingSample {
+    Sample sample;
+    int64_t from_us;
+    double dt_us;
+    uint32_t missed;
+};
+
+struct AutoState {
+    AutoPhase phase;
+    uint32_t generation;
+    uint32_t target;
+    int64_t gap_us;
+    uint32_t bursts;
+    int last_count;
+    int64_t last_edge_us;
+    // Idle: the last kPreSamples conversions wait here before going into
+    // the baseline, so the ones right before a burst go into the burst.
+    PendingSample pending[kPreSamples];
+    int pending_count;
+    int pending_head;  // oldest
+    Accumulator idle;
+    // Burst.
+    Accumulator burst;
+    int start_count;
+    int64_t first_edge_us;
+    int64_t window_start_us;
+};
+
+AutoState automatic = {};
+
+void reset_idle()
+{
+    automatic.idle = {};
+    automatic.pending_count = 0;
+    automatic.pending_head = 0;
+}
+
+void add_to_burst(const PendingSample &entry, bool streaming)
+{
+    accumulate(automatic.burst, entry.sample, entry.dt_us, entry.missed);
+    if (streaming) {
+        add_to_block(automatic.bursts, automatic.window_start_us, entry.from_us,
+                     entry.sample, entry.dt_us);
+    }
+}
+
+void begin_burst(int64_t now_us, const PendingSample &current, bool streaming)
+{
+    automatic.bursts += 1;
+    automatic.burst = {};
+    automatic.start_count = automatic.last_count;
+    automatic.first_edge_us = now_us;
+    automatic.window_start_us = automatic.pending_count > 0
+        ? automatic.pending[automatic.pending_head].from_us
+        : current.from_us;
+    start_block(automatic.bursts, automatic.window_start_us);
+    for (int i = 0; i < automatic.pending_count; ++i) {
+        add_to_burst(automatic.pending[(automatic.pending_head + i) % kPreSamples], streaming);
+    }
+    automatic.pending_count = 0;
+    automatic.pending_head = 0;
+    add_to_burst(current, streaming);
+    automatic.phase = AutoPhase::kBurst;
+}
+
+void end_burst(int count)
+{
+    push_block();
+
+    BurstRecord record;
+    record.index = automatic.bursts;
+    record.inferences = static_cast<uint32_t>(count - automatic.start_count);
+    record.first_edge_us = automatic.first_edge_us;
+    record.last_edge_us = automatic.last_edge_us;
+    record.stream_dropped = stream_dropped.exchange(0);
+    record.idle = automatic.idle;
+    record.window = automatic.burst;
+    if (xQueueSend(burst_queue, &record, 0) != pdTRUE) {
+        bursts_dropped.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    reset_idle();
+    automatic.phase = AutoPhase::kIdle;
+    if (automatic.target != 0 && automatic.bursts >= automatic.target) {
+        automatic.phase = AutoPhase::kOff;
+        portENTER_CRITICAL(&lock);
+        if (auto_generation == automatic.generation) {
+            auto_enabled = false;
+        }
+        portEXIT_CRITICAL(&lock);
+    }
+}
+
+void auto_sample(int64_t now_us, int64_t previous_us, const Sample &sample,
+                 uint32_t missed, int count)
+{
+    bool enabled;
+    uint32_t generation;
+    uint32_t target;
+    int64_t gap_us;
+    portENTER_CRITICAL(&lock);
+    enabled = auto_enabled;
+    generation = auto_generation;
+    target = auto_target;
+    gap_us = auto_gap_us;
+    portEXIT_CRITICAL(&lock);
+
+    if (generation != automatic.generation) {
+        // (Re)armed or aborted: start over. Wait for a quiet sync line
+        // first, so a burst already running is not measured from its middle.
+        automatic = {};
+        automatic.generation = generation;
+        automatic.target = target;
+        automatic.gap_us = gap_us;
+        automatic.phase = enabled ? AutoPhase::kSettle : AutoPhase::kOff;
+        automatic.last_count = count;
+        automatic.last_edge_us = now_us;
+        return;
+    }
+    if (automatic.phase == AutoPhase::kOff) {
+        automatic.last_count = count;
+        return;
+    }
+
+    const bool edge = count != automatic.last_count;
+    if (edge) {
+        automatic.last_edge_us = now_us;
+    }
+    const bool quiet = now_us - automatic.last_edge_us > automatic.gap_us;
+    const bool streaming = stream_enabled.load(std::memory_order_relaxed);
+    const PendingSample current = {sample, previous_us,
+                                   static_cast<double>(now_us - previous_us), missed};
+
+    switch (automatic.phase) {
+    case AutoPhase::kSettle:
+        if (quiet) {
+            reset_idle();
+            automatic.phase = AutoPhase::kIdle;
+        }
+        break;
+    case AutoPhase::kIdle:
+        if (edge) {
+            begin_burst(now_us, current, streaming);
+            break;
+        }
+        if (automatic.pending_count == kPreSamples) {
+            const PendingSample &oldest = automatic.pending[automatic.pending_head];
+            accumulate(automatic.idle, oldest.sample, oldest.dt_us, oldest.missed);
+            automatic.pending[automatic.pending_head] = current;
+            automatic.pending_head = (automatic.pending_head + 1) % kPreSamples;
+        } else {
+            automatic.pending[(automatic.pending_head + automatic.pending_count) %
+                              kPreSamples] = current;
+            automatic.pending_count += 1;
+        }
+        break;
+    case AutoPhase::kBurst:
+        add_to_burst(current, streaming);
+        if (quiet) {
+            end_burst(count);
+        }
+        break;
+    case AutoPhase::kOff:
+        break;
+    }
+    automatic.last_count = count;
+}
+
+void handle_sample(int64_t now_us, int64_t previous_us, const Sample &sample, int count)
+{
+    const uint32_t nominal_us = period_us.load(std::memory_order_relaxed);
+    const int64_t gap_us = now_us - previous_us;
+    uint32_t missed = 0;
+    if (nominal_us > 0 && gap_us * 2 > static_cast<int64_t>(nominal_us) * 3) {
+        missed = static_cast<uint32_t>((gap_us + nominal_us / 2) / nominal_us) - 1;
+    }
+    total_samples.fetch_add(1, std::memory_order_relaxed);
+    total_missed.fetch_add(missed, std::memory_order_relaxed);
+
+    portENTER_CRITICAL(&lock);
+    latest = sample;
+    latest_us = now_us;
+    portEXIT_CRITICAL(&lock);
+
+    manual_window_sample(now_us, previous_us, sample, missed);
+    auto_sample(now_us, previous_us, sample, missed, count);
 }
 
 void apply_config_request(int64_t &previous_us)
@@ -384,6 +642,13 @@ void apply_config_request(int64_t &previous_us)
     portEXIT_CRITICAL(&lock);
 }
 
+int sync_edges()
+{
+    int count = 0;
+    pcnt_unit_get_count(sync_counter, &count);
+    return count;
+}
+
 void sampler_task(void *)
 {
     int64_t previous_us = esp_timer_get_time();
@@ -403,13 +668,14 @@ void sampler_task(void *)
         }
 
         const int64_t now_us = esp_timer_get_time();
+        const int count = sync_edges();
         int16_t shunt_raw = 0;
         uint16_t bus_raw = 0;
         if (ina.read_raw(shunt_raw, bus_raw) != ESP_OK) {
             i2c_errors.fetch_add(1, std::memory_order_relaxed);
             continue;
         }
-        handle_sample(now_us, previous_us, convert(shunt_raw, bus_raw));
+        handle_sample(now_us, previous_us, convert(shunt_raw, bus_raw), count);
         previous_us = now_us;
     }
 }
@@ -449,19 +715,23 @@ const char *number(char *buffer, size_t size, double value, int decimals = 4)
 
 void print_columns()
 {
+    print_line("COLUMNS,BURST,index,n_inf,t_inf_us,busy_us,window_us,samples,missed,"
+               "stream_dropped,idle_us,idle_samples,I_idle_mA,V_idle_V,P_idle_mW,"
+               "P_idle_std_mW,I_mean_mA,V_mean_V,P_mean_mW,E_total_uJ,E_idle_uJ,"
+               "E_net_uJ,E_inf_uJ,E_inf_sigma_uJ,dI_inf_mA,dP_inf_mW,I_inf_mA,P_inf_mW");
     print_line("COLUMNS,BASELINE,window_us,samples,missed,I_mA,V_V,P_mW,"
                "P_std_mW,E_uJ");
     print_line("COLUMNS,RESULT,n_inf,t_inf_us,window_us,samples,missed,"
                "stream_dropped,I_mean_mA,V_mean_V,P_mean_mW,E_total_uJ,"
                "I_idle_mA,P_idle_mW,E_idle_uJ,E_net_uJ,E_inf_uJ,"
                "E_inf_sigma_uJ,dI_window_mA,dI_inf_mA,dP_inf_mW");
-    print_line("COLUMNS,I,t_us,I_mA,dI_mA,P_mW");
+    print_line("COLUMNS,I,window,t_us,I_mA,P_mW");
 }
 
 void print_info()
 {
     char ohms[16];
-    print_line("INFO,0x%02X,%s,%u,%u,%u,%u,%u,%u,%d,%d", ina.address(),
+    print_line("INFO,0x%02X,%s,%u,%u,%u,%u,%u,%u,%d,%d,%d", ina.address(),
                number(ohms, sizeof(ohms), shunt_ohms.load(), 4),
                Ina226::kAveragingCounts[ina.averaging_code()],
                Ina226::kConversionTimesUs[ina.bus_time_code()],
@@ -469,22 +739,19 @@ void print_info()
                static_cast<unsigned>(period_us.load()),
                static_cast<unsigned>(kI2cClockHz),
                static_cast<unsigned>(block_size.load()),
-               stream_enabled.load() ? 1 : 0, baseline.valid ? 1 : 0);
+               stream_enabled.load() ? 1 : 0, baseline.valid ? 1 : 0,
+               static_cast<int>(kSyncPin));
     print_line("# INFO fields: address,shunt_ohms,averaging,vbus_ct_us,"
-               "vshunt_ct_us,period_us,i2c_hz,block,stream,baseline_valid");
+               "vshunt_ct_us,period_us,i2c_hz,block,stream,baseline_valid,sync_gpio");
 }
 
 void print_stream_point(const StreamPoint &point)
 {
     char current[16];
-    char delta[16];
     char power[16];
-    const double delta_ma = baseline.valid
-        ? point.current_ma - baseline.current_ma
-        : NAN;
-    print_line("I,%u,%s,%s,%s", static_cast<unsigned>(point.time_us),
+    print_line("I,%u,%u,%s,%s", static_cast<unsigned>(point.window_id),
+               static_cast<unsigned>(point.time_us),
                number(current, sizeof(current), point.current_ma, 3),
-               number(delta, sizeof(delta), delta_ma, 3),
                number(power, sizeof(power), point.power_mw, 3));
 }
 
@@ -493,9 +760,6 @@ bool print_stream(int budget)
     bool printed = false;
     StreamPoint point;
     while (budget != 0 && xQueueReceive(stream_queue, &point, 0) == pdTRUE) {
-        if (point.window_id != stream_window_id) {
-            continue;
-        }
         print_stream_point(point);
         printed = true;
         if (budget > 0) {
@@ -514,6 +778,90 @@ double power_std(const Accumulator &accumulator)
     const double mean = accumulator.power_sum / n;
     const double variance = (accumulator.power_square_sum - n * mean * mean) / (n - 1.0);
     return variance > 0.0 ? std::sqrt(variance) : 0.0;
+}
+
+// Noise floor of E_net: the uncertainty of both mean powers, with the idle
+// sample spread as the noise and samples taken as independent. Only a guide
+// for choosing N and the window length.
+double net_energy_sigma_uj(double window_us, double idle_power_std_mw,
+                           uint32_t idle_samples, uint32_t window_samples)
+{
+    if (!std::isfinite(idle_power_std_mw) || idle_samples == 0 || window_samples == 0) {
+        return NAN;
+    }
+    return window_us * 1e-3 * idle_power_std_mw *
+           std::sqrt(1.0 / idle_samples + 1.0 / window_samples);
+}
+
+void print_burst(const BurstRecord &record)
+{
+    const Accumulator &idle = record.idle;
+    const Accumulator &window = record.window;
+    const double t = window.covered_us;
+    const double n = record.inferences;
+
+    double idle_current = NAN;
+    double idle_voltage = NAN;
+    double idle_power = NAN;
+    double idle_std = NAN;
+    if (idle.samples >= kMinIdleSamples && idle.covered_us > 0.0) {
+        idle_current = idle.charge / idle.covered_us;
+        idle_voltage = idle.volt_time / idle.covered_us;
+        idle_power = idle.energy / idle.covered_us;
+        idle_std = power_std(idle);
+    }
+    const double current_mean = t > 0.0 ? window.charge / t : NAN;
+    const double voltage_mean = t > 0.0 ? window.volt_time / t : NAN;
+    const double power_mean = t > 0.0 ? window.energy / t : NAN;
+    const double energy_total_uj = window.energy * 1e-3;
+    const double idle_energy_uj = idle_power * t * 1e-3;
+    const double net_energy_uj = energy_total_uj - idle_energy_uj;
+    const double net_charge = window.charge - idle_current * t;  // mA * us
+
+    // Edges are at inference starts: N - 1 inferences between the first
+    // and the last one.
+    const double inference_us = n >= 2
+        ? static_cast<double>(record.last_edge_us - record.first_edge_us) / (n - 1.0)
+        : NAN;
+    const double busy_us = n * inference_us;
+    const double energy_inference_uj = n > 0 ? net_energy_uj / n : NAN;
+    const double sigma_uj = n > 0
+        ? net_energy_sigma_uj(t, idle_std, idle.samples, window.samples) / n
+        : NAN;
+    const double delta_current = net_charge / busy_us;
+    const double delta_power = net_energy_uj * 1e3 / busy_us;
+
+    char c[22][24];
+    print_line("BURST,%u,%u,%s,%s,%.0f,%u,%u,%u,%.0f,%u,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+               "%s,%s,%s,%s",
+               static_cast<unsigned>(record.index), static_cast<unsigned>(record.inferences),
+               number(c[0], sizeof(c[0]), inference_us, 2),
+               number(c[1], sizeof(c[1]), busy_us, 0),
+               t, static_cast<unsigned>(window.samples),
+               static_cast<unsigned>(window.missed + idle.missed),
+               static_cast<unsigned>(record.stream_dropped), idle.covered_us,
+               static_cast<unsigned>(idle.samples),
+               number(c[2], sizeof(c[2]), idle_current),
+               number(c[3], sizeof(c[3]), idle_voltage),
+               number(c[4], sizeof(c[4]), idle_power),
+               number(c[5], sizeof(c[5]), idle_std),
+               number(c[6], sizeof(c[6]), current_mean),
+               number(c[7], sizeof(c[7]), voltage_mean),
+               number(c[8], sizeof(c[8]), power_mean),
+               number(c[9], sizeof(c[9]), energy_total_uj),
+               number(c[10], sizeof(c[10]), idle_energy_uj),
+               number(c[11], sizeof(c[11]), net_energy_uj),
+               number(c[12], sizeof(c[12]), energy_inference_uj),
+               number(c[13], sizeof(c[13]), sigma_uj),
+               number(c[14], sizeof(c[14]), delta_current),
+               number(c[15], sizeof(c[15]), delta_power),
+               number(c[16], sizeof(c[16]), idle_current + delta_current),
+               number(c[17], sizeof(c[17]), idle_power + delta_power));
+    print_line("# Burst %u: %u inferences of %.1f us, Einf %.4f uJ (+- %.4f), "
+               "I %.3f mA idle -> %.3f mA inferring",
+               static_cast<unsigned>(record.index), static_cast<unsigned>(record.inferences),
+               inference_us, energy_inference_uj, sigma_uj, idle_current,
+               idle_current + delta_current);
 }
 
 void finish_baseline(const Accumulator &accumulator)
@@ -571,13 +919,8 @@ void finish_run(const Accumulator &accumulator, uint32_t inferences,
         idle_energy_uj = idle_power * t * 1e-3;
         net_energy_uj = energy_total_uj - idle_energy_uj;
         net_charge = accumulator.charge - idle_current * t;
-        // Noise floor of E_net: the uncertainty of both mean powers, with
-        // the idle sample spread as the noise and samples taken as
-        // independent. Only a guide for choosing N and the window length.
-        if (std::isfinite(baseline.power_std_mw)) {
-            sigma_uj = t * 1e-3 * baseline.power_std_mw *
-                       std::sqrt(1.0 / baseline.samples + 1.0 / accumulator.samples);
-        }
+        sigma_uj = net_energy_sigma_uj(t, baseline.power_std_mw, baseline.samples,
+                                       accumulator.samples);
     }
 
     const double energy_inference_uj = n > 0 ? net_energy_uj / n : NAN;
@@ -630,7 +973,7 @@ void finish_run(const Accumulator &accumulator, uint32_t inferences,
     }
 }
 
-// Prints the result once the sampler has closed the window.
+// Prints the result once the sampler has closed a manual window.
 bool check_window()
 {
     Window snapshot;
@@ -663,13 +1006,39 @@ bool check_window()
     return true;
 }
 
+// Prints the AUTO bursts the sampler finished.
+bool check_bursts()
+{
+    BurstRecord record;
+    if (xQueueReceive(burst_queue, &record, 0) != pdTRUE) {
+        return false;
+    }
+    // Stream points of this burst come before its result.
+    print_stream(-1);
+    print_burst(record);
+    const uint32_t lost = bursts_dropped.exchange(0);
+    if (lost > 0) {
+        print_line("# Warning: %u burst results lost (output too slow)",
+                   static_cast<unsigned>(lost));
+    }
+
+    uint32_t target;
+    portENTER_CRITICAL(&lock);
+    target = auto_target;
+    portEXIT_CRITICAL(&lock);
+    if (target != 0 && record.index >= target) {
+        print_line("AUTO_DONE,%u", static_cast<unsigned>(record.index));
+    }
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
-bool window_open()
+bool busy()
 {
     portENTER_CRITICAL(&lock);
-    const bool open = window.kind != WindowKind::kNone;
+    const bool open = window.kind != WindowKind::kNone || auto_enabled;
     portEXIT_CRITICAL(&lock);
     return open;
 }
@@ -687,7 +1056,6 @@ void open_window(WindowKind kind, uint32_t duration_ms)
     window.id = next_window_id++;
     window.start_us = now_us;
     window.end_us = duration_ms > 0 ? now_us + static_cast<int64_t>(duration_ms) * 1000 : 0;
-    stream_window_id = window.id;
     portEXIT_CRITICAL(&lock);
 }
 
@@ -762,6 +1130,32 @@ void command_config(char *arguments[], int count)
     print_info();
 }
 
+void command_auto(char *arguments[], int count)
+{
+    uint32_t bursts = 0;
+    uint32_t gap_ms = kDefaultGapMs;
+    if (count < 1 || count > 2 || !parse_uint(arguments[0], bursts) ||
+        (count == 2 && !parse_uint(arguments[1], gap_ms)) ||
+        gap_ms < kMinGapMs || gap_ms > kMaxGapMs) {
+        print_line("ERR,usage: AUTO <bursts, 0 = until ABORT> [gap_ms, %u..%u]",
+                   static_cast<unsigned>(kMinGapMs), static_cast<unsigned>(kMaxGapMs));
+        return;
+    }
+    xQueueReset(stream_queue);
+    xQueueReset(burst_queue);
+    stream_dropped.store(0);
+    bursts_dropped.store(0);
+    portENTER_CRITICAL(&lock);
+    auto_enabled = true;
+    auto_generation += 1;
+    auto_target = bursts;
+    auto_gap_us = static_cast<int64_t>(gap_ms) * 1000;
+    portEXIT_CRITICAL(&lock);
+    print_line("OK,AUTO");
+    print_line("# Waiting for the DUT bursts (sync on GPIO%d, %d edges so far)",
+               static_cast<int>(kSyncPin), sync_edges());
+}
+
 void handle_command(char *line)
 {
     constexpr int kMaxArguments = 4;
@@ -777,13 +1171,13 @@ void handle_command(char *line)
         arguments[count++] = token;
     }
 
-    const bool busy = window_open();
+    const bool measuring = busy();
     const auto is = [name](const char *command) { return strcasecmp(name, command) == 0; };
-    const auto refuse_if_busy = [busy]() {
-        if (busy) {
-            print_line("ERR,a window is open (STOP or ABORT it first)");
+    const auto refuse_if_busy = [measuring]() {
+        if (measuring) {
+            print_line("ERR,a measurement is running (STOP or ABORT it first)");
         }
-        return busy;
+        return measuring;
     };
 
     if (is("PING")) {
@@ -798,13 +1192,13 @@ void handle_command(char *line)
         sample = latest;
         sample_us = latest_us;
         portEXIT_CRITICAL(&lock);
-        print_line("READ,%.3f,%.4f,%.3f,%lld,%u,%u,%u", sample.current_ma,
+        print_line("READ,%.3f,%.4f,%.3f,%lld,%u,%u,%u,%d", sample.current_ma,
                    sample.voltage_v, sample.power_mw,
                    static_cast<long long>(esp_timer_get_time() - sample_us),
                    static_cast<unsigned>(total_samples.load()),
                    static_cast<unsigned>(total_missed.load()),
-                   static_cast<unsigned>(i2c_errors.load()));
-        print_line("# READ fields: I_mA,V_V,P_mW,age_us,samples,missed,i2c_errors");
+                   static_cast<unsigned>(i2c_errors.load()), sync_edges());
+        print_line("# READ fields: I_mA,V_V,P_mW,age_us,samples,missed,i2c_errors,sync_edges");
     } else if (is("CFG")) {
         if (!refuse_if_busy()) {
             command_config(arguments, count);
@@ -843,6 +1237,10 @@ void handle_command(char *line)
         }
         stream_enabled.store(enabled == 1);
         print_line("OK,STREAM");
+    } else if (is("AUTO")) {
+        if (!refuse_if_busy()) {
+            command_auto(arguments, count);
+        }
     } else if (is("BASELINE")) {
         uint32_t duration_ms = kDefaultBaselineMs;
         if (refuse_if_busy()) {
@@ -892,9 +1290,11 @@ void handle_command(char *line)
         window.kind = WindowKind::kNone;
         window.closed = false;
         window.id = next_window_id++;  // the sampler drops its block
+        auto_enabled = false;
+        auto_generation += 1;
         portEXIT_CRITICAL(&lock);
-        stream_window_id = 0;
         xQueueReset(stream_queue);
+        xQueueReset(burst_queue);
         print_line("OK,ABORT");
     } else {
         print_line("ERR,unknown command: %s", name);
@@ -950,6 +1350,42 @@ bool init_i2c()
     return i2c_new_master_bus(&config, &i2c_bus) == ESP_OK;
 }
 
+// Hardware counter of the DUT sync edges (both directions).
+bool init_sync_counter()
+{
+    pcnt_unit_config_t unit_config = {};
+    unit_config.low_limit = kPcntLowLimit;
+    unit_config.high_limit = kPcntHighLimit;
+    // Keeps counting past the 16-bit hardware limit (a 3 s RF burst on the
+    // STM32 can be tens of thousands of inferences).
+    unit_config.flags.accum_count = 1;
+    if (pcnt_new_unit(&unit_config, &sync_counter) != ESP_OK) {
+        return false;
+    }
+
+    pcnt_glitch_filter_config_t filter = {};
+    filter.max_glitch_ns = kSyncGlitchNs;
+    pcnt_chan_config_t channel_config = {};
+    channel_config.edge_gpio_num = kSyncPin;
+    channel_config.level_gpio_num = -1;
+    pcnt_channel_handle_t channel = nullptr;
+    if (pcnt_unit_set_glitch_filter(sync_counter, &filter) != ESP_OK ||
+        pcnt_new_channel(sync_counter, &channel_config, &channel) != ESP_OK ||
+        pcnt_channel_set_edge_action(channel, PCNT_CHANNEL_EDGE_ACTION_INCREASE,
+                                     PCNT_CHANNEL_EDGE_ACTION_INCREASE) != ESP_OK ||
+        pcnt_channel_set_level_action(channel, PCNT_CHANNEL_LEVEL_ACTION_KEEP,
+                                      PCNT_CHANNEL_LEVEL_ACTION_KEEP) != ESP_OK ||
+        pcnt_unit_add_watch_point(sync_counter, kPcntHighLimit) != ESP_OK) {
+        return false;
+    }
+    // pcnt_new_channel() turns the input pull-up on; see kSyncPin.
+    gpio_pullup_dis(kSyncPin);
+    gpio_pulldown_dis(kSyncPin);
+    return pcnt_unit_enable(sync_counter) == ESP_OK &&
+           pcnt_unit_clear_count(sync_counter) == ESP_OK &&
+           pcnt_unit_start(sync_counter) == ESP_OK;
+}
+
 void scan_bus()
 {
     int found = 0;
@@ -990,6 +1426,11 @@ void command_task(void *)
         vTaskDelete(nullptr);
         return;
     }
+    if (!init_sync_counter()) {
+        print_line("ERR,sync counter (PCNT) initialization failed");
+        vTaskDelete(nullptr);
+        return;
+    }
     find_ina226();
 
     const esp_err_t configured = ina.configure(
@@ -1001,7 +1442,19 @@ void command_task(void *)
     }
     period_us.store(ina.conversion_period_us());
 
-    stream_queue = xQueueCreate(kStreamQueueLength, sizeof(StreamPoint));
+    burst_queue = xQueueCreate(kBurstQueueLength, sizeof(BurstRecord));
+    for (size_t length : kStreamQueueLengths) {
+        stream_queue = xQueueCreate(length, sizeof(StreamPoint));
+        if (stream_queue != nullptr) {
+            print_line("# Stream queue: %u points", static_cast<unsigned>(length));
+            break;
+        }
+    }
+    if (stream_queue == nullptr || burst_queue == nullptr) {
+        print_line("ERR,out of memory for the output queues");
+        vTaskDelete(nullptr);
+        return;
+    }
     xTaskCreatePinnedToCore(sampler_task, "ina226_sampler", kSamplerStackBytes,
                             nullptr, kSamplerPriority, nullptr, kSamplerCore);
 
@@ -1010,10 +1463,11 @@ void command_task(void *)
     print_line("READY");
 
     for (;;) {
-        bool busy = read_commands();
-        busy |= print_stream(kStreamPrintBudget);
-        busy |= check_window();
-        if (!busy) {
+        bool active = read_commands();
+        active |= print_stream(kStreamPrintBudget);
+        active |= check_window();
+        active |= check_bursts();
+        if (!active) {
             vTaskDelay(1);
         }
     }
