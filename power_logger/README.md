@@ -85,9 +85,10 @@ ele).
 ### 1. Uma vez: gerar os arquivos e gravar o logger
 
 1. Treine os modelos e copie os arquivos para os firmwares, como já é feito
-   para o DS2 (passos 1 e 2 do `ml/pipeline.py`). O passo 2 agora também gera
-   `include/models/energy_beats.h` nos dois firmwares. Se os modelos já
-   estiverem treinados e copiados, basta rodar:
+   para o DS2 (passos 1 e 2 do `ml/pipeline.py`). O pipeline agora também gera
+   os batimentos do teste, `include/data/energy_beats.h`, nos dois firmwares
+   (passo 2b, `write_energy_test_beats`). Se os modelos já estiverem
+   treinados e copiados, basta rodar:
 
    ```
    python ml/src/energy_beats.py

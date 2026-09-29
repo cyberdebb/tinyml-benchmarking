@@ -4,7 +4,7 @@ During the current/energy test the board has no serial link to the host
 (it is powered only through the INA226, see power_logger/README.md), so it
 can't receive beats like in the DS2 test (benchmark_serial.py). Instead a
 fixed set of DS2 beats is compiled into the firmware as
-include/models/energy_beats.h, and the board runs its inferences on them.
+include/data/energy_beats.h, and the board runs its inferences on them.
 
 The beats are raw (unfiltered), like the ones benchmark_serial.py sends: the
 firmware filters them once at boot (filter_sos) and times/measures only the
@@ -105,17 +105,17 @@ def write_header(destination, beats, rr, labels):
 
 
 def write_energy_beats(firmware_directory):
-    """Writes include/models/energy_beats.h into one firmware project.
+    """Writes include/data/energy_beats.h into one firmware project.
     Returns False (with a warning) if the dataset cache isn't available."""
     selected = select_energy_beats()
     if selected is None:
         return False
     beats, rr, labels = selected
-    destination = Path(firmware_directory) / 'include' / 'models' / HEADER_NAME
+    destination = Path(firmware_directory) / 'include' / 'data' / HEADER_NAME
     write_header(destination, beats, rr, labels)
     counts = ', '.join(f'{classes[c]} {int(np.sum(labels == c))}' for c in np.unique(labels))
     print(f'  -> Wrote {HEADER_NAME} ({len(beats)} DS2 beats: {counts}) '
-          f'to {Path(firmware_directory).name} models folder.')
+          f'to {Path(firmware_directory).name}/include/data.')
     return True
 
 

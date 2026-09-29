@@ -11,5 +11,8 @@ managed_components
 # Models
 include/models/
 
+# Test data generated from the dataset (ml/src/energy_beats.py)
+include/data/
+
 # Results
 results

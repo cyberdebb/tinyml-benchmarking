@@ -19,7 +19,7 @@
 // minimum pulse width, so nothing is added to the inference loop but one
 // register write.
 //
-// The beats are the DS2 beats in models/energy_beats.h (ml/src/energy_beats.py),
+// The beats are the DS2 beats in data/energy_beats.h (ml/src/energy_beats.py),
 // filtered once at boot: what is measured is classify(), the same part the
 // DS2 test reports as inference_us.
 #include <cstdint>
@@ -30,7 +30,7 @@
 #include "tinyml_common.h"
 #include "tinyml_model.h"
 
-#include "models/energy_beats.h"
+#include "data/energy_beats.h"
 
 #define DWT_LAR_UNLOCK_KEY 0xC5ACCE55
 

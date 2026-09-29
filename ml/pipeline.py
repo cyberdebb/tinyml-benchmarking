@@ -184,13 +184,19 @@ def copy_model_files(firmware_directory):
         else:
             print(f'[WARNING] {file_name} not found in models directory.')
 
-    # 2.3 DS2 beats compiled into the energy firmware (<model>_energy
-    # environments), which has no serial link during the current/energy test.
+    print('[PIPELINE] Step 2 completed successfully.\n')
+
+
+def write_energy_test_beats(firmware_directory):
+    """Step 2b: DS2 beats compiled into the energy firmware (<model>_energy
+    environments), which has no serial link during the current/energy test
+    (power_logger/README.md). Test data, not a model: written to
+    include/data/, not include/models/."""
+    print(f'[PIPELINE] Step 2b: Writing the energy test beats to {firmware_directory.name}...')
     sys.path.insert(0, str(src_directory))
     from energy_beats import write_energy_beats
-    write_energy_beats(firmware_directory)
-
-    print('[PIPELINE] Step 2 completed successfully.\n')
+    if write_energy_beats(firmware_directory):
+        print('[PIPELINE] Step 2b completed successfully.\n')
 
 
 def clean_model_files(firmware_directory):
@@ -204,7 +210,7 @@ def clean_model_files(firmware_directory):
         return
 
     generated_headers = tuple(tflite_header_name(file_name) for file_name in tflite_files)
-    for file_name in generated_headers + header_files + ('energy_beats.h',):
+    for file_name in generated_headers + header_files:
         target = firmware_models_directory / file_name
         if target.exists():
             target.unlink()
@@ -316,6 +322,7 @@ def main():
     # Step 2: copy the generated models into the firmware project.
     for firmware_directory in (esp32_firmware_directory, stm32_firmware_directory):
         copy_model_files(firmware_directory)
+        write_energy_test_beats(firmware_directory)
         # clean_model_files(firmware_directory)
         # clean_training_directories(firmware_directory)
 
