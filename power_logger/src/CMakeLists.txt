@@ -1,6 +1,13 @@
-# This file was automatically generated for projects
-# without default 'CMakeLists.txt' file.
-
-FILE(GLOB_RECURSE app_sources ${CMAKE_SOURCE_DIR}/src/*.*)
-
-idf_component_register(SRCS ${app_sources})
+idf_component_register(
+    SRCS
+        "main.c"
+        "power_logger.cc"
+        "ina226.cc"
+    INCLUDE_DIRS
+        "../include"
+    REQUIRES
+        esp_driver_i2c
+        esp_driver_uart
+        esp_timer
+        vfs
+)
