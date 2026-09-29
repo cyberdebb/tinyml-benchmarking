@@ -1,4 +1,2 @@
 CONFIG_ESP_CONSOLE_UART_DEFAULT=y
-# Room for the Iinst stream (see src/power_logger.cc); platformio.ini
-# monitor_speed must match.
 CONFIG_ESP_CONSOLE_UART_BAUDRATE=921600
