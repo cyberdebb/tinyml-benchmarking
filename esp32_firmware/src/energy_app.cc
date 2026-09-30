@@ -42,8 +42,9 @@ constexpr char TAG[] = "energy";
 
 constexpr gpio_num_t kSyncPin = GPIO_NUM_4;
 // Idle must be longer than the logger's end-of-burst gap (AUTO, 1000 ms by
-// default) plus enough time for the baseline. The burst stays under the
-// 5 s task watchdog (it never yields).
+// default) plus enough time for the baseline. The burst never yields; the
+// watchdog's idle check on CPU0 is off in this build
+// (sdkconfig.energy.defaults), so it can be longer than 5 s.
 constexpr uint32_t kIdleMs = 5000;
 constexpr uint32_t kBurstMs = 3000;
 
