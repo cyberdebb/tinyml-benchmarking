@@ -45,7 +45,9 @@ board_names = {'esp32': 'ESP32-S3', 'stm32': 'STM32 NUCLEO-F767ZI'}
 model_names = {'cnn': 'CNN', 'mlp': 'MLP', 'rf': 'Random Forest', 'svm': 'SVM'}
 
 baud_rate = 921600
-ready_timeout_seconds = 30
+# The ESP32 ROM prints its boot message at this rate, whatever the firmware.
+rom_baud_rate = 115200
+ready_timeout_seconds = 15
 # One DUT cycle is idle 5 s + burst 3 s; the logger reports a burst ~1 s
 # (the end-of-burst gap) after it ends.
 burst_timeout_seconds = 30
@@ -98,6 +100,52 @@ def read_line(connection):
     return printable.strip()
 
 
+def diagnose_at_rom_baud(connection):
+    """Resets the logger again and reads it at 115200 baud, where the ESP32
+    ROM boot message (and a firmware left at the default baud rate) can be
+    read, then says what that means."""
+    print(f'[DIAG] Resetting the logger and reading it at {rom_baud_rate} baud...')
+    connection.baudrate = rom_baud_rate
+    connection.reset_input_buffer()
+    reset_logger(connection)
+    lines = []
+    deadline = time.time() + 6
+    next_info = time.time() + 2
+    while time.time() < deadline:
+        if time.time() > next_info:
+            connection.write(b'INFO\n')
+            connection.flush()
+            next_info = time.time() + 2
+        line = read_line(connection)
+        if line:
+            lines.append(line)
+            print(f'  [logger @ {rom_baud_rate}] {line}')
+    text = '\n'.join(lines)
+
+    if 'BROWNOUT' in text.upper() or text.count('rst:') > 2:
+        print('[DIAG] The logger keeps resetting (brownout): its 3V3 drops, most likely when '
+              'the board under test starts drawing current through the INA226. Use a '
+              'shorter/better USB cable or a USB port that gives more current, and check '
+              'that the board under test is not ALSO on USB (two 3V3 sources).')
+    elif 'waiting for download' in text:
+        print('[DIAG] The logger is stuck in download mode (GPIO0 low at reset). Unplug it, '
+              'make sure nothing holds GPIO0/BOOT, and plug it back.')
+    elif 'COLUMNS,' in text or 'READY' in text or text.startswith('INFO,') or '\nINFO,' in text:
+        print(f'[DIAG] The power logger firmware answers at {rom_baud_rate} baud, not 921600: '
+              'it was built with the old console setting. Run again with '
+              f'--baud {rom_baud_rate}, or reflash it (cd power_logger, pio run -t upload) '
+              'after checking CONFIG_ESP_CONSOLE_UART_BAUDRATE=921600 in sdkconfig.esp32dev.')
+    elif 'app_main' in text or 'main_task' in text or 'cpu_start' in text:
+        print('[DIAG] The ESP32 boots a program that is not the power logger (probably the '
+              'empty project). Flash it: cd power_logger, pio run -t upload.')
+    elif lines:
+        print('[DIAG] The logger boots but does not answer as the power logger. Flash it '
+              '(cd power_logger, pio run -t upload) and send the lines above if it persists.')
+    else:
+        print('[DIAG] Nothing readable at 115200 either: check that COM port is the ESP32 '
+              'extra (the logger), not the board under test.')
+
+
 def parse_columns(line, columns):
     if line.startswith('COLUMNS,'):
         parts = line.split(',')
@@ -142,9 +190,9 @@ def wait_for_ready(connection):
 
     print('[ERROR] Timed out waiting for the logger.')
     if readable == 0 and garbage > 0:
-        print('[ERROR] Only unreadable bytes came: the logger is not at '
-              f'{connection.baudrate} baud. Flash the current power_logger firmware '
-              '(its console is at 921600, sdkconfig.esp32dev), or pass --baud to match it.')
+        print(f'[ERROR] Only unreadable bytes came at {connection.baudrate} baud.')
+        if connection.baudrate != rom_baud_rate:
+            diagnose_at_rom_baud(connection)
     elif readable == 0:
         print('[ERROR] Nothing came: check the port (it is the logger ESP32, not the board '
               'under test) and that no serial monitor has it open.')
