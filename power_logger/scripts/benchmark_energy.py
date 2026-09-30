@@ -85,31 +85,72 @@ def reset_logger(connection):
 
 
 def read_line(connection):
-    return connection.readline().decode('utf-8', errors='replace').strip()
+    """One line from the logger, with the bytes that aren't printable ASCII
+    removed. Returns None for a line of garbage: after a reset the ESP32 ROM
+    prints its boot message at 115200 baud, which reads as noise at 921600."""
+    raw = connection.readline()
+    if not raw:
+        return ''
+    text = raw.decode('ascii', errors='replace')
+    printable = ''.join(character for character in text if ' ' <= character <= '~')
+    if len(printable) < 0.8 * len(text.strip()):
+        return None
+    return printable.strip()
+
+
+def parse_columns(line, columns):
+    if line.startswith('COLUMNS,'):
+        parts = line.split(',')
+        columns[parts[1]] = parts[2:]
 
 
 def wait_for_ready(connection):
-    """Reads the logger boot log; returns {kind: [field names]} from its
-    COLUMNS lines."""
+    """Waits for the logger after its reset; returns {kind: [field names]}
+    from its COLUMNS lines.
+
+    Ready is the READY line at the end of the boot, or -- if the boot log
+    was missed or garbled -- the answer to INFO, which repeats the COLUMNS
+    lines. INFO is sent every few seconds until the logger answers."""
     deadline = time.time() + ready_timeout_seconds
+    next_info = time.time() + 3
     columns = {}
+    garbage = 0
+    readable = 0
     while time.time() < deadline:
+        if time.time() > next_info:
+            connection.write(b'INFO\n')
+            connection.flush()
+            next_info = time.time() + 3
         line = read_line(connection)
+        if line is None:
+            garbage += 1
+            if garbage == 1:
+                print('  [logger] (unreadable bytes: the ESP32 ROM boot message at 115200 '
+                      'baud, normal after a reset)')
+            continue
         if not line:
             continue
+        readable += 1
         print(f'  [logger] {line}')
-        if line.startswith('COLUMNS,'):
-            parts = line.split(',')
-            columns[parts[1]] = parts[2:]
-        if line == 'READY':
-            if 'BURST' not in columns:
-                print('[ERROR] The logger firmware has no AUTO mode (no BURST columns). '
-                      'Flash the current power_logger firmware.')
-                sys.exit(1)
+        parse_columns(line, columns)
+        if line == 'READY' or (line.startswith('COLUMNS,I,') and 'BURST' in columns):
             return columns
-    print('[ERROR] Timed out waiting for the logger (READY).')
-    print('[ERROR] Check the port (it is the logger ESP32, not the board under test) '
-          'and the INA226 wiring (the logger retries until it finds it).')
+        if line.startswith('COLUMNS,I,'):
+            print('[ERROR] The logger firmware has no AUTO mode (no BURST columns). '
+                  'Flash the current power_logger firmware.')
+            sys.exit(1)
+
+    print('[ERROR] Timed out waiting for the logger.')
+    if readable == 0 and garbage > 0:
+        print('[ERROR] Only unreadable bytes came: the logger is not at '
+              f'{connection.baudrate} baud. Flash the current power_logger firmware '
+              '(its console is at 921600, sdkconfig.esp32dev), or pass --baud to match it.')
+    elif readable == 0:
+        print('[ERROR] Nothing came: check the port (it is the logger ESP32, not the board '
+              'under test) and that no serial monitor has it open.')
+    else:
+        print('[ERROR] The logger answered but never got ready: check the INA226 wiring '
+              '(it retries every 1 s until it finds the INA226).')
     sys.exit(1)
 
 
