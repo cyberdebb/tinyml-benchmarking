@@ -325,6 +325,7 @@ def report_text(arguments, bursts, discarded, ds2_us):
         f'  Bursts: {len(bursts)} used'
         + (f', {discarded} discarded (no idle baseline or < 2 inferences)' if discarded else ''),
         '  Einf = (E_burst - P_idle * T) / N  (baseline subtraction, idle right before each burst)',
+        f'  INA226 shunt: {arguments.rshunt:g} ohm',
         '  Values: mean +- std over the bursts [min .. max]',
         '',
     ]
@@ -372,12 +373,17 @@ def main():
                         help='End-of-burst gap in ms: longer than one inference (default 1000)')
     parser.add_argument('--profile', action='store_true',
                         help='Also save the current profile (Iinst) of every burst')
+    parser.add_argument('--rshunt', type=float, default=0.1,
+                        help='Shunt resistor of the INA226 module in ohms, from its marking: '
+                             'R100 = 0.1 (default), R050 = 0.05, R010 = 0.01')
     parser.add_argument('--block', type=int, default=1,
                         help='INA226 conversions averaged per profile point (default 1, ~0.34 ms)')
     parser.add_argument('--check', action='store_true',
                         help='Only print a few logger readings to check the wiring')
     parser.add_argument('--baud', type=int, default=baud_rate)
     arguments = parser.parse_args()
+    if arguments.rshunt <= 0:
+        parser.error('--rshunt must be > 0')
     if arguments.bursts < 1 or arguments.warmup < 0 or arguments.block < 1:
         parser.error('--bursts >= 1, --warmup >= 0 and --block >= 1')
 
@@ -392,6 +398,8 @@ def main():
         print('[SERIAL] Waiting for the power logger...')
         columns = wait_for_ready(connection)
 
+        # The current is V_shunt / R: a wrong R scales every current and energy.
+        command(connection, f'RSHUNT {arguments.rshunt}')
         if arguments.check:
             check_setup(connection)
             return

@@ -146,6 +146,9 @@ Exemplo com o ESP32-S3 e a CNN. Troque `cnn` por `mlp`, `rf` ou `svm`, e
    ```
    - São 10 bursts medidos (`--bursts`) mais 1 descartado (`--warmup`),
      cerca de 1,5 min.
+   - `--rshunt` informa o resistor shunt do módulo INA226, lido na marcação
+     dele: `R100` = 0,1 Ω (o padrão), `R050` = 0,05 Ω, `R010` = 0,01 Ω. Um
+     valor errado multiplica todas as correntes e energias.
    - `--profile` salva o perfil de corrente. Vale para a CNN e a SVM; no MLP
      e no RF pode deixar sem, ou usar `--block 10` para um perfil mais leve.
 
