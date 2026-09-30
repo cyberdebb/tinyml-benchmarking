@@ -16,7 +16,7 @@ Usage (from the repository root):
 COM6 is the logger's port (not the board's). The first burst after the
 start is discarded (--warmup): the board may still be booting.
 
-Results go to <mcu>_firmware/results/, next to the DS2 test results:
+Results go to <mcu>_firmware/results/energy:
     <model>_energy.csv           one row per burst (all the BURST fields)
     <model>_energy_report.txt    summary over the bursts
     <model>_current_profile.csv  with --profile: the current of each burst,
@@ -309,7 +309,7 @@ def statistics(values):
 
 def ds2_inference_us(firmware_directory, model):
     """Mean inference time of the DS2 test (benchmark_serial.py), if run."""
-    serial_file = firmware_directory / 'results' / f'{model}_serial.csv'
+    serial_file = firmware_directory / 'results' / 'inference' / f'{model}_serial.csv'
     if not serial_file.exists():
         return None
     with open(serial_file, newline='', encoding='utf-8') as handle:
@@ -382,7 +382,7 @@ def main():
         parser.error('--bursts >= 1, --warmup >= 0 and --block >= 1')
 
     firmware_directory = firmware_directories[arguments.mcu]
-    results_directory = firmware_directory / 'results'
+    results_directory = firmware_directory / 'results' / 'energy'
     energy_file = results_directory / f'{arguments.model}_energy.csv'
     report_file = results_directory / f'{arguments.model}_energy_report.txt'
     profile_file = results_directory / f'{arguments.model}_current_profile.csv'

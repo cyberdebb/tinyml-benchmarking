@@ -15,7 +15,7 @@ SVM), separadamente, mede:
   MLP e no RF, que são mais rápidos que uma conversão, só a média do bloco
   tem sentido.
 
-Os resultados ficam em `<mcu>_firmware/results/`, junto com os do DS2.
+Os resultados ficam em `<mcu>_firmware/results/energy/`.
 
 ## Como funciona
 
@@ -156,7 +156,7 @@ upload`) e rode `scripts/benchmark_serial.py`.
 
 ### 3. Resultados
 
-Em `esp32_firmware/results/` ou `stm32_firmware/results/`:
+Em `esp32_firmware/results/energy/` ou `stm32_firmware/results/energy/`:
 
 - **`<modelo>_energy.csv`**: uma linha por burst. As colunas principais são:
   - `n_inf` e `t_inf_us`: número de inferências e tempo de cada uma;

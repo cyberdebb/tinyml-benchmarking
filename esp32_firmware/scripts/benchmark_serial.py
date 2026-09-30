@@ -16,11 +16,11 @@ continues from the first beat that is not in the CSV yet.
 The firmware answers every beat with a line:
     RESULT,<predicted_class>,<inference_microseconds>,<filter_microseconds>
 
-Results are written to results/<model>_serial.csv (per beat) and
-results/<model>_report.txt (the summary printed at the end); a --beats run
+Results are written to results/inference/<model>_serial.csv (per beat) and
+results/inference/<model>_report.txt (the summary printed at the end); a --beats run
 writes <model>_serial_sample<N>.csv / _report.txt instead, so it never
 overwrites a full run. The model size/RAM the firmware reports at boot is
-kept in results/<model>_info.json, so a --resume that has no beats left to
+kept in results/inference/<model>_info.json, so a --resume that has no beats left to
 send still puts them in the report.
 """
 
@@ -39,7 +39,7 @@ from sklearn.metrics import accuracy_score, recall_score, f1_score, fbeta_score,
 
 dataset_directory = Path(__file__).resolve().parents[2] / 'ml'
 firmware_directory = Path(__file__).resolve().parents[1]
-results_directory = firmware_directory / 'results'
+results_directory = firmware_directory / 'results' / 'inference'
 
 from model_size import measure_forest_flash_bytes  # noqa: E402
 
