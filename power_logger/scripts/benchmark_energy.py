@@ -109,7 +109,7 @@ def diagnose_at_rom_baud(connection):
     connection.reset_input_buffer()
     reset_logger(connection)
     lines = []
-    deadline = time.time() + 6
+    deadline = time.time() + 8
     next_info = time.time() + 2
     while time.time() < deadline:
         if time.time() > next_info:
@@ -130,11 +130,14 @@ def diagnose_at_rom_baud(connection):
     elif 'waiting for download' in text:
         print('[DIAG] The logger is stuck in download mode (GPIO0 low at reset). Unplug it, '
               'make sure nothing holds GPIO0/BOOT, and plug it back.')
-    elif 'COLUMNS,' in text or 'READY' in text or text.startswith('INFO,') or '\nINFO,' in text:
-        print(f'[DIAG] The power logger firmware answers at {rom_baud_rate} baud, not 921600: '
-              'it was built with the old console setting. Run again with '
-              f'--baud {rom_baud_rate}, or reflash it (cd power_logger, pio run -t upload) '
-              'after checking CONFIG_ESP_CONSOLE_UART_BAUDRATE=921600 in sdkconfig.esp32dev.')
+    elif 'TinyML power logger' in text or 'power_logger' in text:
+        print(f'[DIAG] The power logger firmware runs at {rom_baud_rate} baud, not 921600 '
+              '(its sdkconfig was generated with the default console rate). Update the '
+              'repository and reflash it (cd power_logger, pio run -t upload): the current '
+              'firmware sets 921600 itself.')
+        if 'i2c' in text.lower() and 'INA226 at' not in text:
+            print('[DIAG] It also cannot talk to the INA226 (I2C errors above): check the '
+                  'INA226 VCC -> 3V3 and GND, SDA -> GPIO21, SCL -> GPIO22 of the ESP32 extra.')
     elif 'app_main' in text or 'main_task' in text or 'cpu_start' in text:
         print('[DIAG] The ESP32 boots a program that is not the power logger (probably the '
               'empty project). Flash it: cd power_logger, pio run -t upload.')

@@ -103,6 +103,7 @@
 #include "driver/pulse_cnt.h"
 #include "driver/uart.h"
 #include "driver/uart_vfs.h"
+#include "esp_err.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -137,6 +138,10 @@ constexpr uart_port_t kUart = UART_NUM_0;
 constexpr int kUartRxBufferBytes = 1024;
 // Room for the stream: uart_write_bytes() only blocks once it is full.
 constexpr int kUartTxBufferBytes = 8192;
+// Set here, not only through CONFIG_ESP_CONSOLE_UART_BAUDRATE: a regenerated
+// sdkconfig falls back to 115200, too slow for the stream. The boot log
+// before this point stays at the sdkconfig rate.
+constexpr uint32_t kUartBaudRate = 921600;
 
 constexpr uint8_t kFirstInaAddress = 0x40;
 constexpr uint8_t kLastInaAddress = 0x4F;
@@ -1334,6 +1339,7 @@ bool read_commands()
 void init_console()
 {
     uart_driver_install(kUart, kUartRxBufferBytes, kUartTxBufferBytes, 0, nullptr, 0);
+    uart_set_baudrate(kUart, kUartBaudRate);
     uart_vfs_dev_use_driver(kUart);
 }
 
@@ -1386,26 +1392,57 @@ bool init_sync_counter()
            pcnt_unit_start(sync_counter) == ESP_OK;
 }
 
-void scan_bus()
+// An idle I2C bus is high on both lines (pull-ups). A line held low means
+// the INA226 module is unpowered (its pull-ups go to its VCC), a wire is on
+// the wrong pin or shorted to GND: every transfer would just time out.
+bool bus_lines_idle()
+{
+    const int sda = gpio_get_level(kSdaPin);
+    const int scl = gpio_get_level(kSclPin);
+    if (sda == 1 && scl == 1) {
+        return true;
+    }
+    print_line("ERR,I2C bus held low (SDA=GPIO%d is %d, SCL=GPIO%d is %d): check the INA226 "
+               "VCC (3V3) and GND, and that SDA/SCL go to GPIO%d/GPIO%d",
+               static_cast<int>(kSdaPin), sda, static_cast<int>(kSclPin), scl,
+               static_cast<int>(kSdaPin), static_cast<int>(kSclPin));
+    return false;
+}
+
+// Lists the devices that answer. False if the bus stops working mid-scan
+// (a timeout, not a missing device), so the caller doesn't wait for 126
+// timeouts.
+bool scan_bus()
 {
     int found = 0;
     for (uint16_t address = 1; address < 127; ++address) {
-        if (i2c_master_probe(i2c_bus, address, kI2cProbeTimeoutMs) == ESP_OK) {
+        const esp_err_t result = i2c_master_probe(i2c_bus, address, kI2cProbeTimeoutMs);
+        if (result == ESP_OK) {
             print_line("# I2C device at 0x%02X", address);
             ++found;
+        } else if (result != ESP_ERR_NOT_FOUND) {
+            print_line("ERR,I2C bus timeout at 0x%02X (%s): check the INA226 VCC/GND and "
+                       "SDA=GPIO%d, SCL=GPIO%d", address, esp_err_to_name(result),
+                       static_cast<int>(kSdaPin), static_cast<int>(kSclPin));
+            return false;
         }
     }
     if (found == 0) {
         print_line("# I2C scan: no device (check SDA=GPIO%d, SCL=GPIO%d, 3V3, GND)",
                    static_cast<int>(kSdaPin), static_cast<int>(kSclPin));
     }
+    return true;
 }
 
 // First INA226 on 0x40..0x4F (A0/A1 straps); retries until one answers.
 void find_ina226()
 {
     for (;;) {
-        scan_bus();
+        if (!bus_lines_idle() || !scan_bus()) {
+            print_line("ERR,no INA226 found, retrying in 1 s");
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
         for (uint8_t address = kFirstInaAddress; address <= kLastInaAddress; ++address) {
             if (i2c_master_probe(i2c_bus, address, kI2cProbeTimeoutMs) == ESP_OK &&
                 ina.begin(i2c_bus, address, kI2cClockHz) == ESP_OK) {
