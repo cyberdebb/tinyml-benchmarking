@@ -178,7 +178,16 @@ Em `esp32_firmware/results/` ou `stm32_firmware/results/`:
 
 - **`Timed out waiting for the logger`:** a porta está errada (é a do ESP32
   extra) ou o INA226 não responde. O logger mostra o scan I2C e tenta de
-  novo a cada 1 s.
+  novo a cada 1 s. Se só chegar lixo, o script lê o logger também a 115200
+  e diz o motivo (linhas `[DIAG]`).
+- **`I2C bus held low` / `I2C bus timeout` / `I2C hardware timeout`:** SDA ou
+  SCL está preso em 0, e o ESP32 não consegue nem começar uma transferência.
+  Quase sempre é o INA226 sem alimentação: os pull-ups do módulo vão para o
+  VCC dele e puxam as linhas para 0. Também pode ser SDA/SCL em pinos
+  trocados ou em curto com o GND. Confira:
+  - VCC do INA226 no 3V3 do ESP32 extra e GND no GND;
+  - SDA no GPIO21 e SCL no GPIO22;
+  - com o ESP32 extra ligado, SDA e SCL medem ~3,3 V em relação ao GND.
 - **`No burst from the board`:**
   - a DUT não está com o firmware `_energy`;
   - o fio SYNC ou o GND não está ligado;
