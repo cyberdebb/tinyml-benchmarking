@@ -187,6 +187,18 @@ def copy_model_files(firmware_directory):
     print('[PIPELINE] Step 2 completed successfully.\n')
 
 
+def write_energy_test_beats(firmware_directory):
+    """Step 2b: DS2 beats compiled into the energy firmware (<model>_energy
+    environments), which has no serial link during the current/energy test
+    (power_logger/README.md). Test data, not a model: written to
+    include/data/, not include/models/."""
+    print(f'[PIPELINE] Step 2b: Writing the energy test beats to {firmware_directory.name}...')
+    sys.path.insert(0, str(src_directory))
+    from energy_beats import write_energy_beats
+    if write_energy_beats(firmware_directory):
+        print('[PIPELINE] Step 2b completed successfully.\n')
+
+
 def clean_model_files(firmware_directory):
     """Reverses copy_model_files by deleting the models and headers from the MCU project."""
     firmware_models_directory = firmware_directory / 'include' / 'models'
@@ -256,20 +268,25 @@ def find_pio_executable():
     return None
 
 
-def build_and_upload_firmware(model, firmware_directory):
+def build_and_upload_firmware(model, firmware_directory, energy=False):
     """Step 3: Build and flash the MCU firmware for a single model.
 
     Args:
         model: One of 'cnn', 'mlp', 'rf' or 'svm'. Must match an environment
                name in <firmware>/platformio.ini. Only one model fits on
                the board at a time.
+        energy: Flash the current/energy test firmware (<model>_energy
+                environment, see power_logger/README.md) instead of the DS2
+                serial benchmark one.
     """
     model = model.lower()
     if model not in classifier_scripts:
         print(f"[ERROR] Invalid model '{model}'. Choose one of: {', '.join(classifier_scripts)}.")
         sys.exit(1)
 
-    print(f"[PIPELINE] Step 3: Building and uploading {firmware_directory.name} for model '{model}'...")
+    environment_name = f'{model}_energy' if energy else model
+    print(f"[PIPELINE] Step 3: Building and uploading {firmware_directory.name} "
+          f"environment '{environment_name}'...")
 
     pio = find_pio_executable()
     if pio is None:
@@ -277,15 +294,15 @@ def build_and_upload_firmware(model, firmware_directory):
         sys.exit(1)
 
     result = subprocess.run(
-        [pio, 'run', '-e', model, '-t', 'upload'],
+        [pio, 'run', '-e', environment_name, '-t', 'upload'],
         cwd=firmware_directory,
         check=False,
     )
     if result.returncode != 0:
-        print(f"[ERROR] PlatformIO build/upload failed for model '{model}'.")
+        print(f"[ERROR] PlatformIO build/upload failed for environment '{environment_name}'.")
         sys.exit(1)
 
-    print(f"[PIPELINE] Step 3 completed successfully for model '{model}'.\n")
+    print(f"[PIPELINE] Step 3 completed successfully for environment '{environment_name}'.\n")
 
 
 # ---------------------------------------------------------------------------
@@ -305,11 +322,14 @@ def main():
     # Step 2: copy the generated models into the firmware project.
     for firmware_directory in (esp32_firmware_directory, stm32_firmware_directory):
         copy_model_files(firmware_directory)
+        write_energy_test_beats(firmware_directory)
         # clean_model_files(firmware_directory)
         # clean_training_directories(firmware_directory)
 
     # Step 3: build and flash one model. Only one fits on the board at a time.
     # build_and_upload_firmware('cnn', esp32_firmware_directory)
+    # Current/energy test firmware (see power_logger/README.md):
+    # build_and_upload_firmware('cnn', esp32_firmware_directory, energy=True)
 
     print('==================================================')
     print('        TinyML Automated Pipeline Finished!       ')
