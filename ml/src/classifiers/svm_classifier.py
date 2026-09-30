@@ -89,6 +89,13 @@ def export_classifier_header(model, output_directory):
             f'#define SVM_GAMMA {_format_float(classifier._gamma)}\n'
             f'#define SVM_SV_SCALE {sv_scale}.0f\n'
             f'#define SVM_DUAL_COEF_SCALE {dual_coef_scale}.0f\n'
+            # Multiplying by the inverse (folded by the compiler) instead of
+            # dividing in the loops: ~36k float divisions per inference are
+            # cheap on the Cortex-M7 (VDIV) but slow on the ESP32-S3, whose
+            # FPU has no single divide instruction, so they skewed the
+            # comparison between the boards.
+            '#define SVM_SV_INV_SCALE (1.0f / SVM_SV_SCALE)\n'
+            '#define SVM_DUAL_COEF_INV_SCALE (1.0f / SVM_DUAL_COEF_SCALE)\n'
             'static const int32_t svm_n_support[SVM_CLASS_COUNT] = {'
             + ','.join(str(int(value)) for value in support_counts)
             + '};\n'
@@ -132,7 +139,7 @@ def export_classifier_header(model, output_directory):
             '    for (int k = 0; k < SVM_SUPPORT_VECTOR_COUNT; ++k) {\n'
             '        float distance = 0.0f;\n'
             '        for (int f = 0; f < SVM_FEATURE_COUNT; ++f) {\n'
-            '            float delta = features[f] - (float)svm_support_vectors[k][f] / SVM_SV_SCALE;\n'
+            '            float delta = features[f] - (float)svm_support_vectors[k][f] * SVM_SV_INV_SCALE;\n'
             '            distance += delta * delta;\n'
             '        }\n'
             '        kvalue[k] = expf(-SVM_GAMMA * distance);\n'
@@ -148,10 +155,10 @@ def export_classifier_header(model, output_directory):
             '            const int count_j = svm_n_support[j];\n'
             '            float sum = svm_intercept[pair];\n'
             '            for (int k = 0; k < count_i; ++k) {\n'
-            '                sum += ((float)svm_dual_coef[j - 1][start_i + k] / SVM_DUAL_COEF_SCALE) * kvalue[start_i + k];\n'
+            '                sum += ((float)svm_dual_coef[j - 1][start_i + k] * SVM_DUAL_COEF_INV_SCALE) * kvalue[start_i + k];\n'
             '            }\n'
             '            for (int k = 0; k < count_j; ++k) {\n'
-            '                sum += ((float)svm_dual_coef[i][start_j + k] / SVM_DUAL_COEF_SCALE) * kvalue[start_j + k];\n'
+            '                sum += ((float)svm_dual_coef[i][start_j + k] * SVM_DUAL_COEF_INV_SCALE) * kvalue[start_j + k];\n'
             '            }\n'
             '            if (sum > 0.0f) ++votes[i]; else ++votes[j];\n'
             '        }\n'

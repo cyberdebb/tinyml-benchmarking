@@ -14,7 +14,7 @@ namespace {
 
 // The whole forest is compiled into this one function (noinline, so it
 // doesn't get mixed into classify()): benchmark_serial.py measures its real
-// flash footprint from the build (ml/src/model_size.py).
+// flash footprint from the build model_size.py).
 __attribute__((noinline)) int32_t tinyml_forest_predict(const float *features)
 {
     return random_forest_predict(features, kFeatureCount);
@@ -42,7 +42,7 @@ void print_model_info()
     // other models have; RANDOM_FOREST_MODEL_BYTES (random_forest_classifier.h)
     // is an estimate from the forest's total decision-node count.
     // benchmark_serial.py replaces it with the size measured from the build
-    // (ml/src/model_size.py) when the build is there.
+    // (model_size.py) when the build is there.
     std::printf("INFO,%s,%u,0\n", kModelName,
                 static_cast<unsigned>(RANDOM_FOREST_MODEL_BYTES));
     std::fflush(stdout);

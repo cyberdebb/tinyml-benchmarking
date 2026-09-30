@@ -107,7 +107,7 @@ DATASET_CACHE_VERSION = 3
 # 1. Filtro Causal (Pronto para o Edge AI / ESP32)
 #
 # Aplicado independentemente em cada janela de batimento (256 amostras), para
-# reproduzir exatamente o que o firmware faz em tinyml_app_<modelo>.cc
+# reproduzir exatamente o que o firmware faz em model_<modelo>.cc
 # (filter_sos): a placa recebe o ECG cru e filtra cada janela isoladamente,
 # sem contexto do sinal continuo. Por isso o filtro NAO e aplicado no sinal
 # continuo do registro nem fica salvo no cache do dataset -- ele so entra na
@@ -205,7 +205,7 @@ def load_and_segment_record(record_name, config):
             # O tamanho recortado será exatamente config.input_size. Cru:
             # sem filtro e sem normalização -- é exatamente o que o
             # firmware recebe por serial e filtra ele mesmo antes de
-            # inferir (ver tinyml_app_<modelo>.cc).
+            # inferir (ver model_<modelo>.cc).
             beat_window = raw_signal[peak_idx - window_radius : peak_idx + window_radius]
 
             # Ainda descarta janelas degeneradas (linha reta / sensor

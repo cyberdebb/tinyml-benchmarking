@@ -1,9 +1,9 @@
 """Sends ECG beats to the ESP32 over UART and collects the predictions.
 
 Usage:
-    python src/benchmark_serial.py COM3 <model>              # whole DS2 test set
-    python src/benchmark_serial.py COM3 <model> --resume     # continue a stopped run
-    python src/benchmark_serial.py COM3 <model> --beats 500  # quick check on a sample
+    python source/benchmark_serial.py COM3 <model>              # whole DS2 test set
+    python source/benchmark_serial.py COM3 <model> --resume     # continue a stopped run
+    python source/benchmark_serial.py COM3 <model> --beats 500  # quick check on a sample
 
 By default every beat of the test set (DS2, the same patients the models were
 evaluated on in training) is sent, so the metrics printed here are the
@@ -41,13 +41,14 @@ dataset_directory = Path(__file__).resolve().parents[2] / 'ml'
 firmware_directory = Path(__file__).resolve().parents[1]
 results_directory = firmware_directory / 'results'
 
+from model_size import measure_forest_flash_bytes  # noqa: E402
+
 # The test split and the cache location come from the training code itself,
 # so the boards are always benchmarked on the same patients the models were
 # tested on.
 sys.path.insert(0, str(dataset_directory / 'src'))
 from load_data import TEST_RECORDS, cache_is_current, dataset_cache_path, select_records  # noqa: E402
-from metrics import SCORED_CLASS_IDS, aami_report  # noqa: E402
-from model_size import measure_forest_flash_bytes  # noqa: E402
+from metrics import NSV_CLASS_IDS, SCORED_CLASS_IDS, aami_report  # noqa: E402
 
 # Must match the classifier configs and the pipeline dataset_config.
 dataset_config = SimpleNamespace(feature='MLII', input_size=256)
@@ -67,7 +68,7 @@ def load_test_set():
     the band-pass filter is applied only at training/evaluation time on the
     host, never saved back to the cache. So the beats sent here over serial
     are raw, matching what the firmware itself filters on-device
-    (tinyml_app_<model>.cc, filter_sos) before running inference.
+    (model_<model>.cc, filter_sos) before running inference.
     """
     cache_file = dataset_cache_path(dataset_config.feature, dataset_config.input_size)
     if not cache_file.exists():
@@ -176,6 +177,32 @@ def read_results(output_file):
         return [{key: int(value) for key, value in row.items()} for row in reader]
 
 
+def macro_scores(y_true, y_predicted, cm, labels, beta):
+    """Macro averages over the given class ids: sensitivity (recall),
+    specificity, F1 and F-beta (beta=2 weighs sensitivity more)."""
+    # A especificidade em multiclasse precisa ser calculada manualmente,
+    # com os Verdadeiros Negativos (TN) e Falsos Positivos (FP) de cada
+    # classe tirados da Matriz de Confusão.
+    specificities = []
+    for i in labels:
+        tp = cm[i, i]
+        fn = np.sum(cm[i, :]) - tp
+        fp = np.sum(cm[:, i]) - tp
+        tn = np.sum(cm) - (tp + fp + fn)
+        # Evita divisão por zero
+        specificities.append(tn / (tn + fp) if (tn + fp) > 0 else 0.0)
+
+    return {
+        'classes': ', '.join(class_names[i] for i in labels),
+        'sensitivity': recall_score(y_true, y_predicted, labels=labels, average='macro',
+                                    zero_division=0),
+        'specificity': np.mean(specificities),
+        'f1': f1_score(y_true, y_predicted, labels=labels, average='macro', zero_division=0),
+        'f_beta': fbeta_score(y_true, y_predicted, beta=beta, labels=labels, average='macro',
+                              zero_division=0),
+    }
+
+
 def summary_text(model, y_true, y_predicted, records, inference_us, filter_us, model_info):
     inference_ms = np.array(inference_us) / 1000.0
     filter_ms = np.array(filter_us) / 1000.0
@@ -184,49 +211,24 @@ def summary_text(model, y_true, y_predicted, records, inference_us, filter_us, m
     accuracy = accuracy_score(y_true, y_predicted)
 
     # Médias macro sobre as mesmas classes do treino (SCORED_CLASSES: N, S,
-    # V, F). Q fica de fora: quase nao ha Q no DS2 sem os registros com
-    # marcapasso, e uma unica previsao Q errada colocaria na media uma classe
-    # com metricas 0.
-    avg_method = 'macro'
-    labels = SCORED_CLASS_IDS
-
-    # 2. Sensibilidade (Recall)
-    sensitivity = recall_score(y_true, y_predicted, labels=labels, average=avg_method, zero_division=0)
-
-    # 3. F1-Score
-    f1 = f1_score(y_true, y_predicted, labels=labels, average=avg_method, zero_division=0)
-
-    # 4. F-beta Score (usando beta=2.0 como exemplo para dar mais peso à sensibilidade)
+    # V, F) e, separado, sobre N, S e V (NSV_CLASSES: o F do DS2 e quase
+    # todo de um registro so, ver metrics.py). Q fica de fora: quase nao ha
+    # Q no DS2 sem os registros com marcapasso, e uma unica previsao Q errada
+    # colocaria na media uma classe com metricas 0.
     beta_val = 2.0
-    f_beta = fbeta_score(y_true, y_predicted, beta=beta_val, labels=labels,
-                         average=avg_method, zero_division=0)
-
-    # 5. Especificidade
-    # A especificidade em multiclasse precisa ser calculada manualmente extraindo os Verdadeiros Negativos (TN)
-    # e Falsos Positivos (FP) da Matriz de Confusão para cada classe.
     # Fixed labels so the matrix is always 5x5, even when a rare class is
     # missing from the beats sent.
     cm = confusion_matrix(y_true, y_predicted, labels=np.arange(len(class_names)))
-    specificities = []
-    for i in labels:
-        tp = cm[i, i]
-        fn = np.sum(cm[i, :]) - tp
-        fp = np.sum(cm[:, i]) - tp
-        tn = np.sum(cm) - (tp + fp + fn)
-
-        # Evita divisão por zero
-        spec = tn / (tn + fp) if (tn + fp) > 0 else 0.0
-        specificities.append(spec)
-
-    # Média das especificidades das classes avaliadas
-    specificity = np.mean(specificities)
+    averages = [macro_scores(y_true, y_predicted, cm, labels, beta_val)
+                for labels in (SCORED_CLASS_IDS, NSV_CLASS_IDS)]
+    class_f1 = f1_score(y_true, y_predicted, labels=SCORED_CLASS_IDS, average=None,
+                        zero_division=0)
 
     # 6. Vazão Computacional (Throughput)
     # Convertendo o tempo médio de inferência para segundos e dividindo 1 por ele
     mean_inference_sec = np.mean(inference_us) / 1_000_000.0
     throughput = 1.0 / mean_inference_sec if mean_inference_sec > 0 else 0.0
 
-    scored = ', '.join(class_names[i] for i in labels)
     lines = ['==================================================',
              f'  Model: {model}']
     if model_info:
@@ -238,10 +240,17 @@ def summary_text(model, y_true, y_predicted, records, inference_us, filter_us, m
     lines += [
         f'  Beats: {len(y_true)}',
         f'  Accuracy:      {accuracy:.4f}',
-        f'  Sensitivity:   {sensitivity:.4f} (Macro Avg {scored})',
-        f'  Specificity:   {specificity:.4f} (Macro Avg {scored})',
-        f'  F1-Score:      {f1:.4f} (Macro Avg {scored})',
-        f'  F-beta (b={beta_val}): {f_beta:.4f} (Macro Avg {scored})',
+    ]
+    for scores in averages:
+        lines += [
+            f"  Sensitivity:   {scores['sensitivity']:.4f} (Macro Avg {scores['classes']})",
+            f"  Specificity:   {scores['specificity']:.4f} (Macro Avg {scores['classes']})",
+            f"  F1-Score:      {scores['f1']:.4f} (Macro Avg {scores['classes']})",
+            f"  F-beta (b={beta_val}): {scores['f_beta']:.4f} (Macro Avg {scores['classes']})",
+        ]
+    lines += [
+        '  F1 per class:  ' + ' | '.join(f'{class_names[i]} {score:.4f}'
+                                         for i, score in zip(SCORED_CLASS_IDS, class_f1)),
         f'  Inference (ms): mean {inference_ms.mean():.2f} | '
         f'min {inference_ms.min():.2f} | max {inference_ms.max():.2f} | '
         f'p95 {np.percentile(inference_ms, 95):.2f}',
@@ -256,12 +265,11 @@ def summary_text(model, y_true, y_predicted, records, inference_us, filter_us, m
 def rf_flash_size(estimated_bytes):
     """The forest is if/else code, so the board only reports an estimate
     (node count x 8 bytes). If the rf build is here (pio run -e rf), use the
-    real compiled size instead (ml/src/model_size.py)."""
-    measured = measure_forest_flash_bytes(firmware_directory / '.pio' / 'build' / 'rf')
+    real compiled size instead (model_size.py)."""
+    measured, problem = measure_forest_flash_bytes(firmware_directory / '.pio' / 'build' / 'rf')
     if measured is None:
-        print('[WARNING] Could not measure the Random Forest size from .pio/build/rf '
-              '(build it here with "pio run -e rf", and pip install pyelftools); '
-              'reporting the node-count estimate.')
+        print(f'[WARNING] Could not measure the Random Forest size: {problem}. '
+              'Reporting the node-count estimate.')
         return {'model_bytes': estimated_bytes, 'size_note': ' (estimated from the node count)'}
     print(f'[DATA] Random Forest size measured from the build: {measured} bytes '
           f'(the node-count estimate was {estimated_bytes})')
