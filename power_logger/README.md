@@ -133,16 +133,16 @@ Exemplo com o ESP32-S3 e a CNN. Troque `cnn` por `mlp`, `rf` ou `svm`, e
 
 3. **Conferir as ligações** (opcional, recomendado na primeira vez):
    ```
-   python power_logger/scripts/benchmark_energy.py COM7 esp32 cnn --check
+   python power_logger/scripts/benchmark_energy.py COM6 esp32 cnn --check
    ```
-   `COM7` é a porta do **logger**. Devem aparecer:
+   `COM6` é a porta do **logger**. Devem aparecer:
    - a corrente da placa (dezenas de mA);
    - uma tensão de ~3,3 V;
    - `sync_edges` saltando a cada ~8 s, que são os bursts.
 
 4. **Rodar o teste:**
    ```
-   python power_logger/scripts/benchmark_energy.py COM7 esp32 cnn --profile
+   python power_logger/scripts/benchmark_energy.py COM6 esp32 cnn --profile
    ```
    - São 10 bursts medidos (`--bursts`) mais 1 descartado (`--warmup`),
      cerca de 1,5 min.

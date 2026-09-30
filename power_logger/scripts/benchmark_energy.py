@@ -8,12 +8,12 @@ pin before each inference. This script only talks to the power logger
 subtraction and answers one BURST line per burst.
 
 Usage (from the repository root):
-    python power_logger/scripts/benchmark_energy.py COM7 esp32 cnn
-    python power_logger/scripts/benchmark_energy.py COM7 stm32 rf --bursts 20
-    python power_logger/scripts/benchmark_energy.py COM7 esp32 cnn --profile
-    python power_logger/scripts/benchmark_energy.py COM7 esp32 cnn --check
+    python power_logger/scripts/benchmark_energy.py COM6 esp32 cnn
+    python power_logger/scripts/benchmark_energy.py COM6 stm32 rf --bursts 20
+    python power_logger/scripts/benchmark_energy.py COM6 esp32 cnn --profile
+    python power_logger/scripts/benchmark_energy.py COM6 esp32 cnn --check
 
-COM7 is the logger's port (not the board's). The first burst after the
+COM6 is the logger's port (not the board's). The first burst after the
 start is discarded (--warmup): the board may still be booting.
 
 Results go to <mcu>_firmware/results/, next to the DS2 test results:
@@ -268,7 +268,7 @@ def report_text(arguments, bursts, discarded, ds2_us):
 def main():
     parser = argparse.ArgumentParser(
         description='Current/energy test of one model on one board, via the power logger.')
-    parser.add_argument('port', help='Serial port of the power logger ESP32, e.g. COM7 or /dev/ttyUSB1')
+    parser.add_argument('port', help='Serial port of the power logger ESP32, e.g. COM6 or /dev/ttyUSB1')
     parser.add_argument('mcu', choices=tuple(firmware_directories),
                         help='Board under test (where the results are saved)')
     parser.add_argument('model', choices=tuple(model_names),
