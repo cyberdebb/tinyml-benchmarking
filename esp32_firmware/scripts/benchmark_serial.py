@@ -19,11 +19,14 @@ The firmware answers every beat with a line:
 Results are written to results/<model>_serial.csv (per beat) and
 results/<model>_report.txt (the summary printed at the end); a --beats run
 writes <model>_serial_sample<N>.csv / _report.txt instead, so it never
-overwrites a full run.
+overwrites a full run. The model size/RAM the firmware reports at boot is
+kept in results/<model>_info.json, so a --resume that has no beats left to
+send still puts them in the report.
 """
 
 import argparse
 import csv
+import json
 import sys
 import time
 from pathlib import Path
@@ -114,8 +117,10 @@ def sample_format(X):
     return '.3f' if np.allclose(np.round(X, 3), X, rtol=0, atol=1e-6) else '.5f'
 
 
-def wait_for_ready(connection, timeout=20):
-    """Reads the boot log until the firmware reports it is ready."""
+def wait_for_ready(connection, timeout=20, required=True):
+    """Reads the boot log until the firmware reports it is ready. Returns the
+    INFO line's model size/RAM ({} if the firmware did not print it). On a
+    timeout exits, or returns None when not required."""
     deadline = time.time() + timeout
     model_info = {}
     while time.time() < deadline:
@@ -132,6 +137,8 @@ def wait_for_ready(connection, timeout=20):
             }
         if 'Ready.' in line:
             return model_info
+    if not required:
+        return None
     print('[ERROR] Timed out waiting for the firmware to become ready.')
     print('[ERROR] Try pressing the board reset button, or check the COM port.')
     sys.exit(1)
@@ -269,6 +276,44 @@ def rf_flash_size(estimated_bytes):
     return {'model_bytes': measured, 'size_note': ' (measured from the build)'}
 
 
+def reset_board(connection):
+    """Resets the board so the run always starts from a known state."""
+    connection.dtr = False
+    connection.rts = True
+    time.sleep(0.1)
+    connection.rts = False
+    time.sleep(0.5)
+
+
+def save_model_info(info_file, model_info):
+    """Keeps the model size/RAM the board reported, for later --resume runs."""
+    info_file.write_text(json.dumps(model_info, indent=2) + '\n', encoding='utf-8')
+
+
+def load_model_info(info_file, arguments):
+    """Model size/RAM for a run that sent no beats: the ones saved by an
+    earlier run, or else read from the board's boot log (no beats sent)."""
+    if info_file.exists():
+        return json.loads(info_file.read_text(encoding='utf-8'))
+
+    print(f'[SERIAL] No saved model size/RAM ({info_file.name}); reading them from the board...')
+    try:
+        with serial.Serial(arguments.port, arguments.baud, timeout=1) as connection:
+            reset_board(connection)
+            model_info = wait_for_ready(connection, required=False)
+    except serial.SerialException as error:
+        print(f'[WARNING] Could not open {arguments.port}: {error}')
+        model_info = None
+    if not model_info:
+        print('[WARNING] The board did not report its model size/RAM; '
+              'they are left out of the report.')
+        return {}
+    if arguments.model == 'rf':
+        model_info.update(rf_flash_size(model_info['model_bytes']))
+    save_model_info(info_file, model_info)
+    return model_info
+
+
 def format_duration(seconds):
     hours, rest = divmod(int(seconds), 3600)
     return f'{hours}h{rest // 60:02d}m'
@@ -295,6 +340,7 @@ def main():
     results_directory.mkdir(parents=True, exist_ok=True)
     output_file = results_directory / f'{arguments.model}_serial{suffix}.csv'
     report_file = results_directory / f'{arguments.model}_report{suffix}.txt'
+    info_file = results_directory / f'{arguments.model}_info.json'
 
     done_rows = []
     if arguments.resume and output_file.exists():
@@ -316,17 +362,13 @@ def main():
             if mode == 'w':
                 writer.writerow(csv_header)
 
-            # Reset the board so the run always starts from a known state.
-            connection.dtr = False
-            connection.rts = True
-            time.sleep(0.1)
-            connection.rts = False
-            time.sleep(0.5)
-
+            reset_board(connection)
             print('[SERIAL] Waiting for the firmware...')
             model_info = wait_for_ready(connection)
-            if arguments.model == 'rf' and model_info:
-                model_info.update(rf_flash_size(model_info['model_bytes']))
+            if model_info:
+                if arguments.model == 'rf':
+                    model_info.update(rf_flash_size(model_info['model_bytes']))
+                save_model_info(info_file, model_info)
 
             start_time = time.time()
             try:
@@ -359,6 +401,11 @@ def main():
         print(f'[STOPPED] {len(done_rows)}/{len(selected)} beats saved to {output_file}.')
         print('[STOPPED] Run the same command with --resume to continue from there.')
         sys.exit(1)
+
+    if not model_info:
+        # No beats were sent in this run (a --resume with nothing left), so
+        # the board was not read: use what it reported before.
+        model_info = load_model_info(info_file, arguments)
 
     rows = sorted(done_rows, key=lambda row: row['beat_index'])
     text = summary_text(
