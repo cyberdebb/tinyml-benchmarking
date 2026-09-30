@@ -24,7 +24,7 @@ const char kModelName[] = "MLP";
 
 namespace {
 
-constexpr size_t kArenaSize = 128;
+constexpr size_t kArenaSize = 128 * 1024;
 
 uint8_t *tensor_arena = nullptr;
 size_t arena_size = 0;
