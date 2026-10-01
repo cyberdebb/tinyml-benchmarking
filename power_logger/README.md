@@ -111,14 +111,14 @@ Exemplo com o ESP32-S3 e a CNN. Troque `cnn` por `mlp`, `rf` ou `svm`, e
 `esp32` por `stm32`.
 
 1. **Gravar o firmware de energia na DUT** (a DUT precisa do USB para isso):
-   - ESP32-S3: **tire o fio IN- do 3V3 do ESP32-S3** (o regulador da placa e
+   - ESP32-S3: **tire o fio IN- e o fio conectado ao ESP32 do ESP32-S3** (o regulador da placa e
      o 3V3 do logger não podem ficar ligados juntos), conecte o USB do
      ESP32-S3 e rode:
      ```
      cd esp32_firmware
      pio run -e cnn_energy -t upload
      ```
-   - STM32: com o **jumper JP5 colocado** e o IN- desconectado, conecte o USB
+   - STM32: com o **jumper JP5 colocado**, o IN- e o fio conectado ao ESP32 desconectados, conecte o USB
      do ST-LINK e rode:
      ```
      cd stm32_firmware
