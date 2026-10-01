@@ -1,0 +1,9 @@
+# Energy test firmware only (<model>_energy environments in platformio.ini),
+# applied on top of sdkconfig.defaults, so everything else (CPU clock,
+# optimization, caches, ...) is the same as in the DS2 serial benchmark.
+#
+# The burst of inferences never yields the CPU, so the task watchdog's idle
+# check on CPU0 would fire on bursts of 5 s or more, and its warning print
+# would fall inside the power logger's measurement window. The check only
+# watches for a stuck CPU0; it does not change how fast the inference runs.
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=n
