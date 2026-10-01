@@ -19,8 +19,9 @@ Os resultados ficam em `<mcu>_firmware/results/`, junto com os do DS2.
 
 ## Como funciona
 
-Durante a medição a placa testada (DUT) é alimentada **só pelo INA226**, sem
-USB (os diagramas de ligação). Então ela não recebe batimentos pela serial:
+Durante a medição o chip da placa testada (DUT) é alimentado **só pelo
+INA226** e não tem ligação serial com o computador. Então ele não recebe
+batimentos pela serial:
 roda o firmware de energia (`<modelo>_energy`), que tem 32 batimentos do DS2
 gravados nele e repete para sempre:
 
@@ -71,11 +72,31 @@ STM32 NUCLEO-F767ZI (DUT):
 
 | Fio | Origem | Destino |
 |---|---|---|
-| IN- | INA226 IN- | pad "STM32" do JP5 (lado do chip, jumper removido) |
-| GND | Nucleo GND | GND comum |
+| IN- | INA226 IN- | pino "STM32" do JP5 (lado do chip, jumper removido) |
+| GND | Nucleo GND (qualquer pino GND, não o AGND) | GND comum |
 | SYNC | **PF13** (D7 no conector CN10) | ESP32 extra GPIO4 |
-| USB do ST-LINK | — | **desconectado durante a medição** (só para gravar) |
-| Pad "fonte" do JP5 | — | sem uso |
+| USB do ST-LINK | Notebook | **conectado também durante a medição** |
+| Pino "fonte" do JP5 | — | sem uso |
+
+Na STM32 o USB do ST-LINK **fica conectado durante a medição** (são dois
+cabos USB: logger e Nucleo):
+
+- **Não há conflito de fontes.** Com o jumper JP5 retirado, o regulador da
+  Nucleo alimenta só o ST-LINK e o resto da placa. O chip STM32 é alimentado
+  só pelo INA226, pelo pino "STM32" do JP5. É o uso previsto do JP5 no manual
+  da placa (UM1974, seção 7.7: tirar o jumper e ligar um medidor no lugar).
+- **Sem o USB, a STM32 fica reiniciando** (o LED COM pisca e não sai nenhum
+  burst). O ST-LINK, sem alimentação, interfere no reset (NRST) do chip. O
+  manual (seção 7.4.2) exige cortar a placa ou retirar o SB111 para usar a
+  placa sem o ST-LINK alimentado.
+- **Qual pino do JP5 é qual:** com o jumper fora e só o USB do ST-LINK
+  conectado, o pino "fonte" mede ~3,3 V e o pino "STM32" mede ~0–0,8 V. Com
+  o IN- no pino errado ("fonte"), o `--check` mostra **corrente negativa**:
+  a Nucleo alimenta o logger de volta pelo shunt.
+- **O chip de Ethernet da placa** manda um clock de 50 MHz para um pino da
+  STM32, e isso soma uma corrente constante ao idle (UM1974, seção 7.7). A
+  subtração do idle cancela essa corrente no Einf, mas o idle absoluto da
+  STM32 fica um pouco acima do consumo do chip sozinho.
 
 O GND precisa ser comum entre logger, INA226 e DUT (o SYNC é referenciado a
 ele).
@@ -126,10 +147,14 @@ Exemplo com o ESP32-S3 e a CNN. Troque `cnn` por `mlp`, `rf` ou `svm`, e
      ```
    - Ou pelo pipeline: `build_and_upload_firmware('cnn', esp32_firmware_directory, energy=True)`.
 
-2. **Montar para a medição:** desconecte o USB da DUT. Na STM32, tire o
-   jumper JP5. Religue o IN- (3V3 do ESP32-S3 ou pad "STM32" do JP5) e
-   confira o fio SYNC e o GND. Ligue o logger no notebook: a DUT liga junto,
-   alimentada pelo INA226.
+2. **Montar para a medição:**
+   - ESP32-S3: desconecte o USB do ESP32-S3, religue o IN- no 3V3 dele e
+     ligue o logger no notebook. O ESP32-S3 liga junto, alimentado pelo
+     INA226.
+   - STM32: tire o jumper JP5, ligue o IN- no pino "STM32" do JP5, **deixe
+     o USB do ST-LINK conectado** e ligue também o logger no notebook. Depois
+     aperte o RESET da Nucleo.
+   - Nas duas placas, confira o fio SYNC e o GND.
 
 3. **Conferir as ligações** (opcional, recomendado na primeira vez):
    ```
@@ -199,10 +224,18 @@ Em `esp32_firmware/results/` ou `stm32_firmware/results/`:
   O `--check` mostra qual desses é: sem corrente, a DUT está sem
   alimentação; com corrente, mas `sync_edges` parado, é o SYNC ou o
   firmware.
-- **STM32 sem bursts, com o ST-LINK desconectado:** confira com o `--check`
-  se a corrente muda a cada ~8 s. Se ficar sempre igual, o MCU não está
-  rodando. Pode ser o reset segurado pelo ST-LINK sem alimentação: teste o
-  firmware antes com o ST-LINK ligado e o jumper JP5 colocado.
+- **STM32 sem bursts** (`sync_edges` parado):
+  - corrente ~0: o IN- não chega ao pino "STM32" do JP5 (fio solto ou no
+    pino errado);
+  - corrente negativa: o IN- está no pino "fonte" do JP5;
+  - corrente alternando sem padrão e LED COM piscando: o USB do ST-LINK está
+    desconectado (veja a nota da STM32 em Ligações).
+- **STM32 não grava (`init mode failed`):**
+  - o jumper JP5 precisa estar colocado e encaixado nos dois pinos (os dois
+    medem ~3,3 V);
+  - o IN- precisa estar solto durante a gravação;
+  - se o firmware de energia já estiver gravado, segure o RESET da Nucleo,
+    rode o upload e solte ao aparecer `Uploading`.
 - **`profile points dropped`:** o perfil com `--block 1` passou da serial.
   Use `--block 2` ou mais.
 - **Comandos manuais:** o logger também aceita comandos no monitor serial,
