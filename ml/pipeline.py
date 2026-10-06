@@ -17,14 +17,21 @@ stm32_firmware_directory = project_directory.parent / 'stm32_firmware'
 
 # Maps each model name to its training script
 classifier_scripts = {
-    'cnn': 'cnn_classifier.py',
+    'cnn_rn': 'cnn_classifier_resnet.py',
+    'cnn_mn2': 'cnn_classifier_mobilenet_v2.py',
+    'cnn_mn3': 'cnn_classifier_mobilenet_v3.py',
     'mlp': 'mlp_classifier.py',
     'rf': 'random_forest_classifier.py',
     'svm': 'svm_classifier.py',
 }
 
 # .tflite models are compiled into the firmware as C arrays (<name>.h)
-tflite_files = ('cnn_classifier.tflite', 'mlp_classifier.tflite')
+tflite_files = (
+    'cnn_classifier_resnet.tflite',
+    'cnn_classifier_mobilenet_v2.tflite', 
+    'cnn_classifier_mobilenet_v3.tflite',  
+    'mlp_classifier.tflite',
+)
 header_files = (
     'mlp_classifier_scaler.h',
     'svm_classifier.h',
@@ -129,7 +136,7 @@ def tflite_header_name(tflite_file_name):
 def write_tflite_header(source, destination):
     """Writes a .tflite model as a C array header (like `xxd -i`).
 
-    The array is named <model>_tflite (e.g. cnn_classifier_tflite) and is
+    The array is named <model>_tflite (e.g. mlp_classifier_tflite) and is
     const, so it stays in flash on both the ESP32 and the STM32.
     """
     data = source.read_bytes()
@@ -316,8 +323,9 @@ def main():
 
     # Comment or uncomment the steps you want to run!
     
-    # Step 1: train the models. Accepts 'cnn', 'mlp', 'rf' and/or 'svm'
-    run_trainings(['cnn', 'mlp', 'rf', 'svm'])
+    # Step 1: train the models.
+    # run_trainings(['cnn_rn', 'cnn_mn2', 'cnn_mn3', 'mlp', 'rf', 'svm'])
+    run_trainings(['cnn_rn', 'cnn_mn2', 'cnn_mn3'])
 
     # Step 2: copy the generated models into the firmware project.
     for firmware_directory in (esp32_firmware_directory, stm32_firmware_directory):
