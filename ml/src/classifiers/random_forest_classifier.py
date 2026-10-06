@@ -20,16 +20,16 @@ from helpers import (extract_neurokit_features, macro_f1, print_aami_report, sel
 # among the ones as good as the best. CLASS_WEIGHT_POWERS changes how much
 # the rare classes are favored (helpers.smoothed_class_weights): with the
 # square root the forest called only 17% of the S beats S on DS2.
-RF_N_ESTIMATORS_VALUES = (10, 20, 40)
-RF_MAX_DEPTH_VALUES = (8, 12, 16)
-RF_MIN_SAMPLES_LEAF_VALUES = (4, 16)
-RF_CLASS_WEIGHT_POWERS = (0.5, 0.75, 1.0)
+rf_n_estimators_values = (10, 20, 40)
+rf_max_depth_values = (8, 12, 16)
+rf_min_samples_leaf_values = (4, 16)
+rfrf_class_weight_powers = (0.5, 0.75, 1.0)
 
 # Estimated flash per decision node once compiled (a float load + compare +
 # branch on a 32-bit target). method="inline" turns the forest into nested
 # if/else code, so there is no data array whose sizeof() could be reported
 # like the other models' -- this is an estimate, not a measurement.
-RF_BYTES_PER_NODE = 8
+rf_bytes_per_node = 8
 
 
 def forest_node_count(forest_classifier):
@@ -55,8 +55,8 @@ def search_forest(x_train, y_train, x_validate, y_validate):
     arguments). The forests are not kept (they can take a lot of memory):
     the chosen one is trained again, with the same seed."""
     results = []
-    grid = list(itertools.product(RF_N_ESTIMATORS_VALUES, RF_MAX_DEPTH_VALUES,
-                                  RF_MIN_SAMPLES_LEAF_VALUES, RF_CLASS_WEIGHT_POWERS))
+    grid = list(itertools.product(rf_n_estimators_values, rf_max_depth_values,
+                                  rf_min_samples_leaf_values, rfrf_class_weight_powers))
     for index, (n_estimators, max_depth, min_samples_leaf, power) in enumerate(grid, start=1):
         forest_classifier = train_forest(x_train, y_train, n_estimators, max_depth,
                                          min_samples_leaf, power)
@@ -65,7 +65,7 @@ def search_forest(x_train, y_train, x_validate, y_validate):
             'config': {'n_estimators': n_estimators, 'max_depth': max_depth,
                        'min_samples_leaf': min_samples_leaf, 'class_weight_power': power},
             'val_macro_f1': score,
-            'model_bytes': forest_node_count(forest_classifier) * RF_BYTES_PER_NODE,
+            'model_bytes': forest_node_count(forest_classifier) * rf_bytes_per_node,
         })
         print(f'[SEARCH] {index}/{len(grid)} {results[-1]["config"]}: '
               f'validation macro-F1 {score:.4f}, {results[-1]["model_bytes"] / 1024:.1f} KB')
@@ -87,9 +87,9 @@ def export_model(forest_classifier):
     # The generated C source's byte length would be a bad stand-in for the
     # model size (it counts every brace, indent and "return N;", wildly
     # overstating the compiled size). Total decision-node count is a real,
-    # reproducible complexity measure; RF_BYTES_PER_NODE converts it into
+    # reproducible complexity measure; rf_bytes_per_node converts it into
     # an estimated flash footprint.
-    bytes_per_node = RF_BYTES_PER_NODE
+    bytes_per_node = rf_bytes_per_node
     node_count = forest_node_count(forest_classifier)
     model_bytes = node_count * bytes_per_node
 

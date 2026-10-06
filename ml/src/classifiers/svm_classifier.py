@@ -22,8 +22,8 @@ from helpers import (extract_neurokit_features, macro_f1, print_aami_report, sel
 # support vectors (every prediction computes the kernel against each one),
 # which C and gamma change a lot; the search keeps the smallest model among
 # the ones as good as the best.
-SVM_C_VALUES = (0.3, 1.0, 3.0, 10.0)
-SVM_GAMMA_VALUES = (0.03, 0.0625, 0.125)
+svm_c_values = (0.3, 1.0, 3.0, 10.0)
+svm_gamma_values = (0.03, 0.0625, 0.125)
 
 
 def _format_float(value):
@@ -238,7 +238,7 @@ def search_svm(x_train, y_train, x_validate, y_validate):
     """Trains every (C, gamma) in the grid and returns the model chosen by
     helpers.select_compact_model."""
     results = []
-    grid = [(C_value, gamma_value) for C_value in SVM_C_VALUES for gamma_value in SVM_GAMMA_VALUES]
+    grid = [(C_value, gamma_value) for C_value in svm_c_values for gamma_value in svm_gamma_values]
     for index, (C_value, gamma_value) in enumerate(grid, start=1):
         start = time.time()
         model = train_svm(x_train, y_train, C_value, gamma_value)
@@ -285,7 +285,7 @@ def main():
     x_validate, y_validate = extract_neurokit_features(validation.X, validation.rr, validation.y)
     x_test, y_test = extract_neurokit_features(test.X, test.rr, test.y)
 
-    print(f'[TRAIN] SVM search: C in {SVM_C_VALUES}, gamma in {SVM_GAMMA_VALUES}')
+    print(f'[TRAIN] SVM search: C in {svm_c_values}, gamma in {svm_gamma_values}')
     model = search_svm(x_train, y_train, x_validate, y_validate)
     classifier = model.named_steps['svc']
     print(f'[TRAIN] Chosen SVM: C={classifier.C}, gamma={classifier.gamma}, '
