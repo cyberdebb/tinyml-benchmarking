@@ -208,7 +208,7 @@ def export_model(mlp_classifier, scaler, x_train):
     )
     keras_model.save(output_directory / 'mlp_classifier.keras')
 
-    # Full integer (int8) quantization, same approach as cnn_classifier.py's
+    # Full integer (int8) quantization, same approach as the cnn classifier
     # export_model(): weights, activations, input and output all int8,
     # calibrated from the actual training features. Previously this just
     # called converter.convert() with no optimizations at all, so MLP was
