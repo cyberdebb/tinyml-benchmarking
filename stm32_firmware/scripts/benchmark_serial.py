@@ -322,7 +322,7 @@ def format_duration(seconds):
 def main():
     parser = argparse.ArgumentParser(description='Benchmark a model running on the STM32.')
     parser.add_argument('port', help='Serial port, e.g. COM3 or /dev/ttyUSB0')
-    parser.add_argument('model', choices=('cnn_resnet', 'cnn_mobilenet_v2', 'cnn_mobilenet_v3', 'mlp', 'rf', 'svm'),
+    parser.add_argument('model', choices=('cnn_rn', 'cnn_mn2', 'cnn_mn3', 'mlp', 'rf', 'svm'),
                         help='Model currently flashed on the board (used for the output file)')
     parser.add_argument('--beats', type=int, default=None,
                         help='Send only a random sample of this many beats (quick check). '

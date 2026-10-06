@@ -19,7 +19,7 @@ stm32_firmware_directory = project_directory.parent / 'stm32_firmware'
 # The three CNN variants share the firmware code (model_cnn.cc); the build
 # environment picks which model header it includes.
 classifier_scripts = {
-    'cnn_resnet': 'cnn_classifier_resnet.py',
+    'cnn_rn': 'cnn_classifier_resnet.py',
     'cnn_mobilenet_v2': 'cnn_classifier_mobilenet_v2.py',
     'cnn_mobilenet_v3': 'cnn_classifier_mobilenet_v3.py',
     'mlp': 'mlp_classifier.py',
@@ -88,7 +88,7 @@ def run_trainings(models):
 
     Args:
         models: List of model names to train, in any order. Valid names are
-                'cnn_resnet', 'cnn_mobilenet_v2', 'cnn_mobilenet_v3', 'mlp',
+                'cnn_rn', 'cnn_mobilenet_v2', 'cnn_mobilenet_v3', 'mlp',
                 'rf' and 'svm'. A single name may also be passed as a plain
                 string.
     """
@@ -282,7 +282,7 @@ def build_and_upload_firmware(model, firmware_directory, energy=False):
     """Step 3: Build and flash the MCU firmware for a single model.
 
     Args:
-        model: One of the classifier_scripts keys ('cnn_resnet', 'mlp',
+        model: One of the classifier_scripts keys ('cnn_rn', 'mlp',
                ...). Must match an environment name in
                <firmware>/platformio.ini. Only one model fits on the board
                at a time.
@@ -328,7 +328,7 @@ def main():
     # Comment or uncomment the steps you want to run!
     
     # Step 1: train the models. Accepts any of the classifier_scripts keys.
-    run_trainings(['cnn_resnet', 'cnn_mobilenet_v2', 'cnn_mobilenet_v3', 'mlp', 'rf', 'svm'])
+    run_trainings(['cnn_rn', 'cnn_mobilenet_v2', 'cnn_mobilenet_v3', 'mlp', 'rf', 'svm'])
 
     # Step 2: copy the generated models into the firmware project.
     for firmware_directory in (esp32_firmware_directory, stm32_firmware_directory):
