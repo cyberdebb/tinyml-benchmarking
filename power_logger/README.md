@@ -128,8 +128,8 @@ ele).
 
 ### 2. Para cada MCU e cada modelo
 
-Exemplo com o ESP32-S3 e a CNN MobileNetV2. Os modelos são `cnn_resnet`,
-`cnn_mobilenet_v2`, `cnn_mobilenet_v3`, `mlp`, `rf` e `svm`. Para a outra
+Exemplo com o ESP32-S3 e a CNN MobileNetV2. Os modelos são `cnn_rn`,
+`cnn_mn2`, `cnn_mn3`, `mlp`, `rf` e `svm`. Para a outra
 placa, troque `esp32` por `stm32`.
 
 1. **Gravar o firmware de energia na DUT** (a DUT precisa do USB para isso):
@@ -138,15 +138,15 @@ placa, troque `esp32` por `stm32`.
      ESP32-S3 e rode:
      ```
      cd esp32_firmware
-     pio run -e cnn_mobilenet_v2_energy -t upload
+     pio run -e cnn_mn2_energy -t upload
      ```
    - STM32: com o **jumper JP5 colocado**, o IN- e o fio conectado ao ESP32 desconectados, conecte o USB
      do ST-LINK e rode:
      ```
      cd stm32_firmware
-     pio run -e cnn_mobilenet_v2_energy -t upload
+     pio run -e cnn_mn2_energy -t upload
      ```
-   - Ou pelo pipeline: `build_and_upload_firmware('cnn_mobilenet_v2', esp32_firmware_directory, energy=True)`.
+   - Ou pelo pipeline: `build_and_upload_firmware('cnn_mn2', esp32_firmware_directory, energy=True)`.
 
 2. **Montar para a medição:**
    - ESP32-S3: desconecte o USB do ESP32-S3, religue o IN- no 3V3 dele e
@@ -159,7 +159,7 @@ placa, troque `esp32` por `stm32`.
 
 3. **Conferir as ligações** (opcional, recomendado na primeira vez):
    ```
-   python power_logger/scripts/benchmark_energy.py COM7 esp32 cnn_mobilenet_v2 --check
+   python power_logger/scripts/benchmark_energy.py COM6 esp32 cnn_mn2 --check
    ```
    `COM6` é a porta do **logger**. Devem aparecer:
    - a corrente da placa (dezenas de mA);
@@ -168,7 +168,7 @@ placa, troque `esp32` por `stm32`.
 
 4. **Rodar o teste:**
    ```
-   python power_logger/scripts/benchmark_energy.py COM7 esp32 cnn_mobilenet_v2 --profile
+   python power_logger/scripts/benchmark_energy.py COM6 esp32 cnn_mn2 --profile
    ```
    - São 10 bursts medidos (`--bursts`) mais 1 descartado (`--warmup`),
      cerca de 1,5 min.
@@ -181,7 +181,7 @@ placa, troque `esp32` por `stm32`.
 5. Repita para os outros modelos e para a outra placa.
 
 O teste do DS2 continua igual: grave o ambiente normal (por exemplo
-`pio run -e cnn_mobilenet_v2 -t upload`) e rode `scripts/benchmark_serial.py`.
+`pio run -e cnn_mn2 -t upload`) e rode `scripts/benchmark_serial.py`.
 
 ### 3. Resultados
 

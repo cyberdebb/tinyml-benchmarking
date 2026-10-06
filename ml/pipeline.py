@@ -20,8 +20,8 @@ stm32_firmware_directory = project_directory.parent / 'stm32_firmware'
 # environment picks which model header it includes.
 classifier_scripts = {
     'cnn_rn': 'cnn_classifier_resnet.py',
-    'cnn_mobilenet_v2': 'cnn_classifier_mobilenet_v2.py',
-    'cnn_mobilenet_v3': 'cnn_classifier_mobilenet_v3.py',
+    'cnn_mn2': 'cnn_classifier_mobilenet_v2.py',
+    'cnn_mn3': 'cnn_classifier_mobilenet_v3.py',
     'mlp': 'mlp_classifier.py',
     'rf': 'random_forest_classifier.py',
     'svm': 'svm_classifier.py',
@@ -88,7 +88,7 @@ def run_trainings(models):
 
     Args:
         models: List of model names to train, in any order. Valid names are
-                'cnn_rn', 'cnn_mobilenet_v2', 'cnn_mobilenet_v3', 'mlp',
+                'cnn_rn', 'cnn_mn2', 'cnn_mn3', 'mlp',
                 'rf' and 'svm'. A single name may also be passed as a plain
                 string.
     """
@@ -328,7 +328,7 @@ def main():
     # Comment or uncomment the steps you want to run!
     
     # Step 1: train the models. Accepts any of the classifier_scripts keys.
-    run_trainings(['cnn_rn', 'cnn_mobilenet_v2', 'cnn_mobilenet_v3', 'mlp', 'rf', 'svm'])
+    run_trainings(['cnn_rn', 'cnn_mn2', 'cnn_mn3', 'mlp', 'rf', 'svm'])
 
     # Step 2: copy the generated models into the firmware project.
     for firmware_directory in (esp32_firmware_directory, stm32_firmware_directory):
@@ -338,9 +338,9 @@ def main():
         # clean_training_directories(firmware_directory)
 
     # Step 3: build and flash one model. Only one fits on the board at a time.
-    # build_and_upload_firmware('cnn_mobilenet_v2', esp32_firmware_directory)
+    # build_and_upload_firmware('cnn_mn2', esp32_firmware_directory)
     # Current/energy test firmware (see power_logger/README.md):
-    # build_and_upload_firmware('cnn_mobilenet_v2', esp32_firmware_directory, energy=True)
+    # build_and_upload_firmware('cnn_mn2', esp32_firmware_directory, energy=True)
 
     print('==================================================')
     print('        TinyML Automated Pipeline Finished!       ')
