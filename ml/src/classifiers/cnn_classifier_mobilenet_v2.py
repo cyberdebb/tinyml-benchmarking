@@ -209,11 +209,11 @@ def export_model(model, train_inputs):
     print('[EXPORT] Starting model export...')
     output_directory.mkdir(parents=True, exist_ok=True)
 
-    keras_path = output_directory / 'model_name.keras'
-    tflite_path = output_directory / 'model_name.tflite'
+    keras_path = output_directory / f'{model_name}.keras'
+    tflite_path = output_directory / f'{model_name}.tflite'
     model.save(keras_path)
 
-    # OPIMIZATIONS
+    # OPTIMIZATIONS
     converter = tf.lite.TFLiteConverter.from_keras_model(model)
     converter.optimizations = [tf.lite.Optimize.DEFAULT]
     converter.representative_dataset = build_representative_dataset(
