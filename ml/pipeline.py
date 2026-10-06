@@ -16,10 +16,12 @@ esp32_firmware_directory = project_directory.parent / 'esp32_firmware'
 stm32_firmware_directory = project_directory.parent / 'stm32_firmware'
 
 # Maps each model name to its training script
+# The three CNN variants share the firmware code (model_cnn.cc); the build
+# environment picks which model header it includes.
 classifier_scripts = {
-    'cnn_rn': 'cnn_classifier_resnet.py',
-    'cnn_mn2': 'cnn_classifier_mobilenet_v2.py',
-    'cnn_mn3': 'cnn_classifier_mobilenet_v3.py',
+    'cnn_resnet': 'cnn_classifier_resnet.py',
+    'cnn_mobilenet_v2': 'cnn_classifier_mobilenet_v2.py',
+    'cnn_mobilenet_v3': 'cnn_classifier_mobilenet_v3.py',
     'mlp': 'mlp_classifier.py',
     'rf': 'random_forest_classifier.py',
     'svm': 'svm_classifier.py',
@@ -28,8 +30,8 @@ classifier_scripts = {
 # .tflite models are compiled into the firmware as C arrays (<name>.h)
 tflite_files = (
     'cnn_classifier_resnet.tflite',
-    'cnn_classifier_mobilenet_v2.tflite', 
-    'cnn_classifier_mobilenet_v3.tflite',  
+    'cnn_classifier_mobilenet_v2.tflite',
+    'cnn_classifier_mobilenet_v3.tflite',
     'mlp_classifier.tflite',
 )
 header_files = (
@@ -86,8 +88,9 @@ def run_trainings(models):
 
     Args:
         models: List of model names to train, in any order. Valid names are
-                'cnn', 'mlp', 'rf' and 'svm'. A single name may also be passed
-                as a plain string.
+                'cnn_resnet', 'cnn_mobilenet_v2', 'cnn_mobilenet_v3', 'mlp',
+                'rf' and 'svm'. A single name may also be passed as a plain
+                string.
     """
     if isinstance(models, str):
         models = [models]
@@ -136,7 +139,7 @@ def tflite_header_name(tflite_file_name):
 def write_tflite_header(source, destination):
     """Writes a .tflite model as a C array header (like `xxd -i`).
 
-    The array is named <model>_tflite (e.g. mlp_classifier_tflite) and is
+    The array is named <model>_tflite (e.g. cnn_classifier_resnet_tflite) and is
     const, so it stays in flash on both the ESP32 and the STM32.
     """
     data = source.read_bytes()
@@ -279,9 +282,10 @@ def build_and_upload_firmware(model, firmware_directory, energy=False):
     """Step 3: Build and flash the MCU firmware for a single model.
 
     Args:
-        model: One of 'cnn', 'mlp', 'rf' or 'svm'. Must match an environment
-               name in <firmware>/platformio.ini. Only one model fits on
-               the board at a time.
+        model: One of the classifier_scripts keys ('cnn_resnet', 'mlp',
+               ...). Must match an environment name in
+               <firmware>/platformio.ini. Only one model fits on the board
+               at a time.
         energy: Flash the current/energy test firmware (<model>_energy
                 environment, see power_logger/README.md) instead of the DS2
                 serial benchmark one.
@@ -323,9 +327,8 @@ def main():
 
     # Comment or uncomment the steps you want to run!
     
-    # Step 1: train the models.
-    # run_trainings(['cnn_rn', 'cnn_mn2', 'cnn_mn3', 'mlp', 'rf', 'svm'])
-    run_trainings(['cnn_rn', 'cnn_mn2', 'cnn_mn3'])
+    # Step 1: train the models. Accepts any of the classifier_scripts keys.
+    run_trainings(['cnn_resnet', 'cnn_mobilenet_v2', 'cnn_mobilenet_v3', 'mlp', 'rf', 'svm'])
 
     # Step 2: copy the generated models into the firmware project.
     for firmware_directory in (esp32_firmware_directory, stm32_firmware_directory):
@@ -335,9 +338,9 @@ def main():
         # clean_training_directories(firmware_directory)
 
     # Step 3: build and flash one model. Only one fits on the board at a time.
-    # build_and_upload_firmware('cnn', esp32_firmware_directory)
+    # build_and_upload_firmware('cnn_mobilenet_v2', esp32_firmware_directory)
     # Current/energy test firmware (see power_logger/README.md):
-    # build_and_upload_firmware('cnn', esp32_firmware_directory, energy=True)
+    # build_and_upload_firmware('cnn_mobilenet_v2', esp32_firmware_directory, energy=True)
 
     print('==================================================')
     print('        TinyML Automated Pipeline Finished!       ')

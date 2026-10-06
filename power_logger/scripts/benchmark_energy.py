@@ -8,10 +8,10 @@ pin before each inference. This script only talks to the power logger
 subtraction and answers one BURST line per burst.
 
 Usage (from the repository root):
-    python power_logger/scripts/benchmark_energy.py COM6 esp32 cnn
+    python power_logger/scripts/benchmark_energy.py COM6 esp32 cnn_resnet
     python power_logger/scripts/benchmark_energy.py COM6 stm32 rf --bursts 20
-    python power_logger/scripts/benchmark_energy.py COM6 esp32 cnn --profile
-    python power_logger/scripts/benchmark_energy.py COM6 esp32 cnn --check
+    python power_logger/scripts/benchmark_energy.py COM6 esp32 cnn_mobilenet_v2 --profile
+    python power_logger/scripts/benchmark_energy.py COM6 esp32 cnn_mobilenet_v2 --check
 
 COM6 is the logger's port (not the board's). The first burst after the
 start is discarded (--warmup): the board may still be booting.
@@ -42,7 +42,14 @@ firmware_directories = {
     'stm32': repository_directory / 'stm32_firmware',
 }
 board_names = {'esp32': 'ESP32-S3', 'stm32': 'STM32 NUCLEO-F767ZI'}
-model_names = {'cnn': 'CNN', 'mlp': 'MLP', 'rf': 'Random Forest', 'svm': 'SVM'}
+model_names = {
+    'cnn_resnet': 'CNN ResNet-1D',
+    'cnn_mobilenet_v2': 'CNN MobileNetV2-1D',
+    'cnn_mobilenet_v3': 'CNN MobileNetV3-1D',
+    'mlp': 'MLP',
+    'rf': 'Random Forest',
+    'svm': 'SVM',
+}
 
 baud_rate = 921600
 # The ESP32 ROM prints its boot message at this rate, whatever the firmware.

@@ -366,7 +366,7 @@ def main():
         base_filters=16,
         kernel_size=7,          # stem kernel; block kernels come from bneck
         bneck=BNECK_CONFIG,
-        last_channels=64,
+        last_channels=64,       # 1x1 conv before pooling (128 in the paper's proportion)
         drop_rate=0.2,          # now only before the classifier
         dense_units=32,
         rr_units=16,
