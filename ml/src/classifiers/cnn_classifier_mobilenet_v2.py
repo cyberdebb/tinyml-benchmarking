@@ -58,7 +58,7 @@ output_directory = Path('models')
 #     network, so amplitude differences between patients/electrodes don't
 #     dominate (normalize_beats, and the same step in model_cnn.cc)
 #
-# Resulting model: roughly 100-150k parameters, ~150 KB after int8 quantization
+# Resulting model: roughly ~41k parameters, ~110 KB after int8 quantization
 # (previous version: ~8M parameters, ~32 MB in float32).
 # ---------------------------------------------------------------------------
 

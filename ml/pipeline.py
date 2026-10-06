@@ -328,7 +328,9 @@ def main():
     # Comment or uncomment the steps you want to run!
     
     # Step 1: train the models. Accepts any of the classifier_scripts keys.
-    run_trainings(['cnn_rn', 'cnn_mn2', 'cnn_mn3', 'mlp', 'rf', 'svm'])
+    # run_trainings(['cnn_rn', 'cnn_mn2', 'cnn_mn3', 'mlp', 'rf', 'svm'])
+    # run_trainings(['cnn_mn2', 'mlp', 'rf', 'svm'])
+    run_trainings(['cnn_mn3'])
 
     # Step 2: copy the generated models into the firmware project.
     for firmware_directory in (esp32_firmware_directory, stm32_firmware_directory):

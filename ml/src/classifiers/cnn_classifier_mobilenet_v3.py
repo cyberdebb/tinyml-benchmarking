@@ -48,11 +48,11 @@ output_directory = Path('models')
 #     rounded to a multiple of 8
 #   - per-block table (kernel, expansion channels, output channels, SE,
 #     activation, stride) instead of a fixed expansion factor
-#   - residual only when stride == 1 and channels match (no 1x1
-#     projection shortcut, as in the original MobileNetV3)
+#   - same block skeleton as the V2 version (dropout after the depthwise
+#     conv in every block, identity or 1x1 projection shortcut in every
+#     block), so the comparison isolates the V3 changes
 #   - "efficient last stage": 1x1 conv + hard-swish before the global
-#     pooling, hard-swish dense layer after it, dropout only before the
-#     classifier
+#     pooling, hard-swish dense layer after it
 #
 # Kept from the V2 version:
 #   - RR features through their own branch (BatchNormalization + Dense)
@@ -66,12 +66,12 @@ output_directory = Path('models')
 # (~69k weights / ~2.3M MACs vs ~40k / ~1.9M): the comparison measures the
 # V3 changes (SE, hard-swish, kernels), not a bigger network.
 BNECK_CONFIG = [
-    (7, 16,  16, True,  'relu',   1),   # 256 (no expansion: exp == in)
+    (7, 16,  16, False, 'relu',   1),   # 256, no expansion, no SE at full resolution (as in V3-Large)
     (7, 32,  16, False, 'relu',   2),   # 256 -> 128
     (7, 32,  16, False, 'relu',   1),
-    (5, 64,  32, True,  'hswish', 2),   # 128 -> 64
+    (5, 32,  32, True,  'hswish', 2),   # 128 -> 64
     (5, 64,  32, True,  'hswish', 1),
-    (5, 128, 64, True,  'hswish', 2),   # 64 -> 32
+    (5, 64,  64, True,  'hswish', 2),   # 64 -> 32
     (5, 128, 64, True,  'hswish', 1),
 ]
 
@@ -106,7 +106,8 @@ def squeeze_excite(x, ratio=0.25):
     return Multiply()([x, s])
 
 
-def bneck_block(layer, kernel_size, exp_channels, out_channels, use_se, activation, strides):
+def bneck_block(layer, kernel_size, exp_channels, out_channels, use_se, activation, strides,
+                drop_rate):
     """MobileNetV3 bottleneck: expand (1x1) -> depthwise -> SE -> project (1x1, linear)."""
     in_channels = layer.shape[-1]
     x = layer
@@ -125,13 +126,23 @@ def bneck_block(layer, kernel_size, exp_channels, out_channels, use_se, activati
     if use_se:
         x = squeeze_excite(x)
 
+    # Same regularization as the V2 version (dropout in every block)
+    if drop_rate > 0:
+        x = Dropout(drop_rate)(x)
+
     x = Conv1D(out_channels, kernel_size=1, padding='same', use_bias=False,
                kernel_initializer='he_normal')(x)
     x = BatchNormalization()(x)
 
+    # Same shortcuts as the V2 version: identity when the shape matches,
+    # linear 1x1 projection otherwise
     if strides == 1 and in_channels == out_channels:
-        x = add([layer, x])
-    return x
+        shortcut = layer
+    else:
+        shortcut = Conv1D(out_channels, kernel_size=1, strides=strides, padding='same',
+                          use_bias=False, kernel_initializer='he_normal')(layer)
+        shortcut = BatchNormalization()(shortcut)
+    return add([shortcut, x])
 
 
 def stem(inputs, config):
@@ -144,7 +155,7 @@ def stem(inputs, config):
 def main_loop_blocks(layer, config):
     for kernel_size, exp_channels, out_channels, use_se, activation, strides in config.bneck:
         layer = bneck_block(layer, kernel_size, exp_channels, out_channels,
-                            use_se, activation, strides)
+                            use_se, activation, strides, config.drop_rate)
     return layer
 
 
@@ -163,8 +174,6 @@ def output_block(layer, inputs, rr_input, config):
 
     layer = Dense(config.dense_units)(layer)
     layer = apply_activation(layer, 'hswish')
-    if config.drop_rate > 0:
-        layer = Dropout(config.drop_rate)(layer)
     outputs = Dense(len(classes), activation='softmax')(layer)
 
     model = Model(inputs=[inputs, rr_input], outputs=outputs, name='cnn_classifier_mobilenet_v3')
@@ -367,7 +376,7 @@ def main():
         kernel_size=7,          # stem kernel; block kernels come from bneck
         bneck=BNECK_CONFIG,
         last_channels=64,       # 1x1 conv before pooling (128 in the paper's proportion)
-        drop_rate=0.2,          # now only before the classifier
+        drop_rate=0.2,          # after the depthwise conv of every block, as in V2
         dense_units=32,
         rr_units=16,
         feature='MLII',
