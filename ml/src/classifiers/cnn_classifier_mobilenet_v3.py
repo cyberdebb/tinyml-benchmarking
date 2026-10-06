@@ -167,7 +167,7 @@ def output_block(layer, inputs, rr_input, config):
         layer = Dropout(config.drop_rate)(layer)
     outputs = Dense(len(classes), activation='softmax')(layer)
 
-    model = Model(inputs=[inputs, rr_input], outputs=outputs, name=model_name)
+    model = Model(inputs=[inputs, rr_input], outputs=outputs, name='cnn_classifier_mobilenet_v3')
 
     model.compile(
         optimizer=Adam(learning_rate=config.learning_rate),

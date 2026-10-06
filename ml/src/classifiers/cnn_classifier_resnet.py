@@ -140,7 +140,7 @@ def output_block(layer, inputs, rr_input, config):
     # The .tflite orders its inputs by name, not in this order:
     # model_cnn.cc and evaluate_tflite() find each input by size, and
     # the calibration data is fed by name (export_model).
-    model = Model(inputs=[inputs, rr_input], outputs=outputs, name='model_name')
+    model = Model(inputs=[inputs, rr_input], outputs=outputs, name='cnn_classifier_resnet')
 
     model.compile(
         # The previous learning rate (0.1) is far too high for Adam.
@@ -260,7 +260,7 @@ def build_training_callbacks(config, validation_inputs, yval):
             write_images=True,
         ),
         ModelCheckpoint(
-            str(output_directory / 'model_name.keras'),
+            str(output_directory / f'{model_name}.keras'),
             monitor='val_macro_f1',
             mode='max',
             save_best_only=True,
@@ -346,7 +346,7 @@ def main():
         min_lr=5e-5,
         checkpoint_path=None,
         resume_epoch=0,
-        trained_model=str(output_directory / 'model_name.keras'),
+        trained_model=str(output_directory / f'{model_name}.keras'),
         export_only=False,  # True: skip training and re-export trained_model
     )
     print('[CONFIG] CNN configuration:')

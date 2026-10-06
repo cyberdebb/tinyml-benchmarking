@@ -177,7 +177,7 @@ def output_block(layer, inputs, rr_input, config):
     layer = Dense(config.dense_units, activation='relu')(layer)
     outputs = Dense(len(classes), activation='softmax')(layer)
     
-    model = Model(inputs=[inputs, rr_input], outputs=outputs, name='model_name')
+    model = Model(inputs=[inputs, rr_input], outputs=outputs, name='cnn_classifier_mobilenet_v2')
 
     model.compile(
         optimizer=Adam(learning_rate=config.learning_rate),
@@ -297,7 +297,7 @@ def build_training_callbacks(config, validation_inputs, yval):
             write_images=True,
         ),
         ModelCheckpoint(
-            str(output_directory / 'model_name.keras'),
+            str(output_directory / f'{model_name}.keras'),
             monitor='val_macro_f1',
             mode='max',
             save_best_only=True,
@@ -383,7 +383,7 @@ def main():
         min_lr=5e-5,
         checkpoint_path=None,
         resume_epoch=0,
-        trained_model=str(output_directory / 'model_name.keras'),
+        trained_model=str(output_directory / f'{model_name}.keras'),
         export_only=False,
     )
     print('[CONFIG] CNN configuration:')
