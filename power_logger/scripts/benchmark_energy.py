@@ -8,10 +8,10 @@ pin before each inference. This script only talks to the power logger
 subtraction and answers one BURST line per burst.
 
 Usage (from the repository root):
-    python power_logger/scripts/benchmark_energy.py COM6 esp32 cnn_rn
-    python power_logger/scripts/benchmark_energy.py COM6 stm32 rf --bursts 20
-    python power_logger/scripts/benchmark_energy.py COM6 esp32 cnn_mn2 --profile
-    python power_logger/scripts/benchmark_energy.py COM6 esp32 cnn_mn2 --check
+    python scripts/benchmark_energy.py COM6 esp32 cnn_rn
+    python scripts/benchmark_energy.py COM6 stm32 rf --bursts 20
+    python scripts/benchmark_energy.py COM6 esp32 cnn_mn2 --profile
+    python scripts/benchmark_energy.py COM6 esp32 cnn_mn2 --check
 
 COM6 is the logger's port (not the board's). The first burst after the
 start is discarded (--warmup): the board may still be booting.
