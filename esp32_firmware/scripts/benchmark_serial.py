@@ -213,6 +213,13 @@ def macro_scores(y_true, y_predicted, cm, labels, beta):
     }
 
 
+def spread(values, spec='.2f'):
+    """mean +- std [min .. max], the same layout as the energy report."""
+    std = values.std(ddof=1) if len(values) > 1 else 0.0
+    return (f'{values.mean():{spec}} +- {std:{spec}} '
+            f'[{values.min():{spec}} .. {values.max():{spec}}]')
+
+
 def summary_text(model, y_true, y_predicted, records, inference_us, filter_us, model_info):
     inference_ms = np.array(inference_us) / 1000.0
     filter_ms = np.array(filter_us) / 1000.0
@@ -261,10 +268,10 @@ def summary_text(model, y_true, y_predicted, records, inference_us, filter_us, m
     lines += [
         '  F1 per class:  ' + ' | '.join(f'{class_names[i]} {score:.4f}'
                                          for i, score in zip(SCORED_CLASS_IDS, class_f1)),
-        f'  Inference (ms): mean {inference_ms.mean():.2f} | '
-        f'min {inference_ms.min():.2f} | max {inference_ms.max():.2f} | '
-        f'p95 {np.percentile(inference_ms, 95):.2f}',
-        f'  SOS filter (ms): mean {filter_ms.mean():.2f}',
+        # Same layout as the energy report (benchmark_energy.py):
+        # mean +- std over the beats [min .. max].
+        f'  Inference time (ms): {spread(inference_ms)}',
+        f'  SOS filter (ms):     {spread(filter_ms)}',
         f'  Throughput:    {throughput:.2f} inferences/second',
         '==================================================',
     ]
