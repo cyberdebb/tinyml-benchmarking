@@ -58,6 +58,16 @@ baud_rate = 115200
 # to cover transfer plus inference.
 read_timeout_seconds = 15
 class_names = ('N', 'S', 'V', 'F', 'Q')
+# Full names for the report, the same as power_logger/scripts/benchmark_energy.py.
+board_name = 'STM32 NUCLEO-F767ZI'
+model_names = {
+    'cnn_rn': 'CNN ResNet-1D',
+    'cnn_mn2': 'CNN MobileNetV2-1D',
+    'cnn_mn3': 'CNN MobileNetV3-1D',
+    'mlp': 'MLP',
+    'rf': 'Random Forest',
+    'svm': 'SVM',
+}
 csv_header = ['beat_index', 'record', 'true_class', 'predicted_class', 'inference_us', 'filter_us']
 
 
@@ -229,7 +239,7 @@ def summary_text(model, y_true, y_predicted, records, inference_us, filter_us, m
     throughput = 1.0 / mean_inference_sec if mean_inference_sec > 0 else 0.0
 
     lines = ['==================================================',
-             f'  Model: {model}']
+             f'  Inference test: {model_names[model]} on the {board_name}']
     if model_info:
         size_note = model_info.get('size_note', '')
         lines += [f"  Model size: {model_info['model_bytes'] / 1024:.1f} KB{size_note}",
@@ -257,7 +267,7 @@ def summary_text(model, y_true, y_predicted, records, inference_us, filter_us, m
         f'  Throughput:    {throughput:.2f} inferences/second',
         '==================================================',
     ]
-    report, _ = aami_report(f'{model} on the board', y_true, y_predicted, records)
+    report, _ = aami_report(f'{model_names[model]} on the {board_name}', y_true, y_predicted, records)
     return report + '\n\n' + '\n'.join(lines)
 
 
@@ -322,7 +332,7 @@ def format_duration(seconds):
 def main():
     parser = argparse.ArgumentParser(description='Benchmark a model running on the STM32.')
     parser.add_argument('port', help='Serial port, e.g. COM3 or /dev/ttyUSB0')
-    parser.add_argument('model', choices=('cnn_rn', 'cnn_mn2', 'cnn_mn3', 'mlp', 'rf', 'svm'),
+    parser.add_argument('model', choices=tuple(model_names),
                         help='Model currently flashed on the board (used for the output file)')
     parser.add_argument('--beats', type=int, default=None,
                         help='Send only a random sample of this many beats (quick check). '
