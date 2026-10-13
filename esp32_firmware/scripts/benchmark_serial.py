@@ -221,8 +221,11 @@ def spread(values, spec='.2f'):
 
 
 def summary_text(model, y_true, y_predicted, records, inference_us, filter_us, model_info):
-    inference_ms = np.array(inference_us) / 1000.0
-    filter_ms = np.array(filter_us) / 1000.0
+    # In microseconds, the resolution the firmware measures in (and the unit
+    # of the energy report): in ms, 2 decimals would round a fast model's
+    # std to 0.00.
+    inference_us = np.array(inference_us, dtype=float)
+    filter_us = np.array(filter_us, dtype=float)
 
     # 1. Acurácia
     accuracy = accuracy_score(y_true, y_predicted)
@@ -270,8 +273,8 @@ def summary_text(model, y_true, y_predicted, records, inference_us, filter_us, m
                                          for i, score in zip(SCORED_CLASS_IDS, class_f1)),
         # Same layout as the energy report (benchmark_energy.py):
         # mean +- std over the beats [min .. max].
-        f'  Inference time (ms): {spread(inference_ms)}',
-        f'  SOS filter (ms):     {spread(filter_ms)}',
+        f'  Inference time (us): {spread(inference_us)}',
+        f'  SOS filter (us):     {spread(filter_us)}',
         f'  Throughput:    {throughput:.2f} inferences/second',
         '==================================================',
     ]
