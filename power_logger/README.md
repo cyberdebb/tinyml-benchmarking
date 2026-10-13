@@ -190,6 +190,9 @@ Em `esp32_firmware/results/` ou `stm32_firmware/results/`:
 - **`<modelo>_energy.csv`**: uma linha por burst. As colunas principais são:
   - `n_inf` e `t_inf_us`: número de inferências e tempo de cada uma;
   - `E_inf_uJ`: **Einf**; `E_inf_sigma_uJ` é o piso de ruído dela;
+  - `E_inf_total_uJ`: energia por inferência **com** o idle incluído,
+    `Einf + P_idle * t_inf` (= `P_inf * t_inf`). Está para `I_inf_mA` e
+    `P_inf_mW` assim como o Einf está para `dI_inf_mA` e `dP_inf_mW`;
   - `I_idle_mA` e `P_idle_mW`: o baseline (idle logo antes do burst);
   - `I_inf_mA` e `P_inf_mW`: **corrente e potência durante a inferência**,
     como média em blocos;

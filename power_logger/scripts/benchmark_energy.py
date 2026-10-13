@@ -17,7 +17,8 @@ COM7 is the logger's port (not the board's). The first burst after the
 start is discarded (--warmup): the board may still be booting.
 
 Results go to <mcu>_firmware/results/, next to the DS2 test results:
-    <model>_energy.csv           one row per burst (all the BURST fields)
+    <model>_energy.csv           one row per burst (all the BURST fields,
+                                 plus E_inf_total_uJ)
     <model>_energy_report.txt    summary over the bursts
     <model>_current_profile.csv  with --profile: the current of each burst,
                                  averaged over blocks of --block conversions
@@ -64,6 +65,7 @@ summary_fields = (
     ('n_inf', 'Inferences per burst', '.0f'),
     ('t_inf_us', 'Inference time (us)', '.2f'),
     ('E_inf_uJ', 'Einf, energy per inference above idle (uJ)', '.4f'),
+    ('E_inf_total_uJ', 'Energy per inference while inferring, idle included (uJ)', '.4f'),
     ('E_inf_sigma_uJ', 'Einf noise floor per burst (uJ)', '.4f'),
     ('I_idle_mA', 'Idle current (mA)', '.3f'),
     ('V_idle_V', 'Idle voltage (V)', '.4f'),
@@ -282,6 +284,7 @@ def run_bursts(connection, columns, arguments, profile_writer):
         if line.startswith('BURST,'):
             values = dict(zip(burst_fields, line.split(',')[1:]))
             burst = {key: to_number(value) for key, value in values.items()}
+            add_total_energy(burst)
             index = int(burst['index'])
             warmup = index <= arguments.warmup
             rows = profile_rows.pop(index, [])
@@ -304,6 +307,14 @@ def run_bursts(connection, columns, arguments, profile_writer):
         if line.startswith('#') and 'Burst' in line:
             continue  # the human summary of the BURST line just printed
         print(f'  [logger] {line}')
+
+
+def add_total_energy(burst):
+    """Adds E_inf_total_uJ, the energy per inference with the idle part kept
+    in: Einf + P_idle * t_inf, i.e. P_inf * t_inf. It is the energy per
+    inference counterpart of I_inf_mA / P_inf_mW, as Einf is of dI_inf_mA /
+    dP_inf_mW (mW * us = nJ, hence the / 1000)."""
+    burst['E_inf_total_uJ'] = burst['E_inf_uJ'] + burst['P_idle_mW'] * burst['t_inf_us'] / 1000
 
 
 def statistics(values):
@@ -441,7 +452,8 @@ def main():
         sys.exit(1)
 
     with open(energy_file, 'w', newline='', encoding='utf-8') as handle:
-        fields = ['burst'] + [key for key in columns['BURST'] if key != 'index']
+        fields = (['burst'] + [key for key in columns['BURST'] if key != 'index']
+                  + ['E_inf_total_uJ'])
         writer = csv.writer(handle)
         writer.writerow(['mcu', 'model'] + fields)
         for number, burst in enumerate(bursts, start=1):
