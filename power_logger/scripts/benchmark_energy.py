@@ -12,6 +12,10 @@ Usage (from the repository root):
     python scripts/benchmark_energy.py COM6 stm32 rf --bursts 20
     python scripts/benchmark_energy.py COM6 esp32 cnn_mn2 --profile
     python scripts/benchmark_energy.py COM6 esp32 cnn_mn2 --check
+    python scripts/benchmark_energy.py esp32 cnn_rn --report-only
+
+--report-only rewrites <model>_energy_report.txt from the saved
+<model>_energy.csv, without the logger or the board (no port needed).
 
 COM6 is the logger's port (not the board's). The first burst after the
 start is discarded (--warmup): the board may still be booting.
@@ -383,10 +387,48 @@ def report_text(arguments, bursts, discarded, ds2_us):
     return '\n'.join(lines)
 
 
+def read_bursts(energy_file):
+    """Bursts saved by an earlier run (<model>_energy.csv), as dicts."""
+    if not energy_file.exists():
+        print(f'[ERROR] {energy_file} not found: run the test first.')
+        sys.exit(1)
+    with open(energy_file, newline='', encoding='utf-8') as handle:
+        return [{key: to_number(value) for key, value in row.items()
+                 if key not in ('mcu', 'model')}
+                for row in csv.DictReader(handle)]
+
+
+def saved_rshunt(report_file):
+    """Shunt resistor written in an earlier report, if there is one."""
+    if report_file.exists():
+        for line in report_file.read_text(encoding='utf-8').splitlines():
+            if line.strip().startswith('INA226 shunt:'):
+                return to_number(line.split(':')[1].split()[0])
+    return None
+
+
+def valid_bursts(bursts):
+    return [burst for burst in bursts
+            if math.isfinite(burst['E_inf_uJ']) and burst['n_inf'] >= 2]
+
+
+def write_report(arguments, firmware_directory, report_file, bursts):
+    valid = valid_bursts(bursts)
+    if not valid:
+        print('[ERROR] No valid burst (no idle baseline or no inferences counted).')
+        sys.exit(1)
+    text = report_text(arguments, valid, len(bursts) - len(valid),
+                       ds2_inference_us(firmware_directory, arguments.model))
+    print('\n' + text)
+    report_file.write_text(text + '\n', encoding='utf-8')
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Current/energy test of one model on one board, via the power logger.')
-    parser.add_argument('port', help='Serial port of the power logger ESP32, e.g. COM6 or /dev/ttyUSB1')
+    parser.add_argument('port', nargs='?',
+                        help='Serial port of the power logger ESP32, e.g. COM6 or /dev/ttyUSB1 '
+                             '(not needed with --report-only)')
     parser.add_argument('mcu', choices=tuple(firmware_directories),
                         help='Board under test (where the results are saved)')
     parser.add_argument('model', choices=tuple(model_names),
@@ -398,16 +440,21 @@ def main():
                         help='End-of-burst gap in ms: longer than one inference (default 1000)')
     parser.add_argument('--profile', action='store_true',
                         help='Also save the current profile (Iinst) of every burst')
-    parser.add_argument('--rshunt', type=float, default=0.1,
+    parser.add_argument('--rshunt', type=float, default=None,
                         help='Shunt resistor of the INA226 module in ohms, from its marking: '
                              'R100 = 0.1 (default), R050 = 0.05, R010 = 0.01')
     parser.add_argument('--block', type=int, default=1,
                         help='INA226 conversions averaged per profile point (default 1, ~0.34 ms)')
     parser.add_argument('--check', action='store_true',
                         help='Only print a few logger readings to check the wiring')
+    parser.add_argument('--report-only', action='store_true',
+                        help='Only rewrite the report from the saved <model>_energy.csv '
+                             '(no logger, no board)')
     parser.add_argument('--baud', type=int, default=baud_rate)
     arguments = parser.parse_args()
-    if arguments.rshunt <= 0:
+    if arguments.port is None and not arguments.report_only:
+        parser.error('the port of the power logger is required (e.g. COM6)')
+    if arguments.rshunt is not None and arguments.rshunt <= 0:
         parser.error('--rshunt must be > 0')
     if arguments.bursts < 1 or arguments.warmup < 0 or arguments.block < 1:
         parser.error('--bursts >= 1, --warmup >= 0 and --block >= 1')
@@ -417,6 +464,17 @@ def main():
     energy_file = results_directory / f'{arguments.model}_energy.csv'
     report_file = results_directory / f'{arguments.model}_energy_report.txt'
     profile_file = results_directory / f'{arguments.model}_current_profile.csv'
+
+    if arguments.report_only:
+        # The CSV already holds the measured values; the shunt is only
+        # written in the report, so keep the one of the earlier report.
+        if arguments.rshunt is None:
+            arguments.rshunt = saved_rshunt(report_file) or 0.1
+        write_report(arguments, firmware_directory, report_file, read_bursts(energy_file))
+        print(f'\n[DONE] Report rewritten from {energy_file}: {report_file}')
+        return
+    if arguments.rshunt is None:
+        arguments.rshunt = 0.1
 
     with serial.Serial(arguments.port, arguments.baud, timeout=1) as connection:
         reset_logger(connection)
@@ -452,9 +510,7 @@ def main():
             if profile_handle is not None:
                 profile_handle.close()
 
-    valid = [burst for burst in bursts
-             if math.isfinite(burst['E_inf_uJ']) and burst['n_inf'] >= 2]
-    if not valid:
+    if not valid_bursts(bursts):
         print('[ERROR] No valid burst (no idle baseline or no inferences counted).')
         sys.exit(1)
 
@@ -466,10 +522,7 @@ def main():
             writer.writerow([arguments.mcu, arguments.model, number]
                             + [burst[key] for key in fields[1:]])
 
-    text = report_text(arguments, valid, len(bursts) - len(valid),
-                       ds2_inference_us(firmware_directory, arguments.model))
-    print('\n' + text)
-    report_file.write_text(text + '\n', encoding='utf-8')
+    write_report(arguments, firmware_directory, report_file, bursts)
     saved = [energy_file, report_file] + ([profile_file] if arguments.profile else [])
     print('\n[DONE] Results saved to ' + ', '.join(str(path) for path in saved))
 

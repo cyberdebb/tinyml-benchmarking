@@ -198,8 +198,11 @@ Em `esp32_firmware/results/energy/` ou `stm32_firmware/results/energy/`:
     idle e a diferença entre as duas.
 - **`<modelo>_energy_report.txt`**: média ± desvio sobre os bursts, com o
   erro padrão da média de Einf. Também traz a energia de uma inferência com
-  o idle incluído (`Einf + P_idle × t_inf`, ou seja `P_inf × t_inf`). Também compara o `t_inf` com o tempo de
-  inferência do teste do DS2, se ele já tiver rodado.
+  o idle incluído (`Einf + P_idle × t_inf`, ou seja `P_inf × t_inf`) e
+  compara o `t_inf` com o tempo de inferência do teste do DS2, se ele já
+  tiver rodado. Para refazer só o relatório a partir do `<modelo>_energy.csv`
+  salvo, sem o logger nem a placa:
+  `python power_logger/scripts/benchmark_energy.py esp32 cnn_rn --report-only`.
 - **`<modelo>_current_profile.csv`** (com `--profile`): colunas `burst`,
   `t_us`, `I_mA`, `dI_mA` e `P_mW`, a corrente de cada burst no tempo
   (Iinst por média em blocos).
