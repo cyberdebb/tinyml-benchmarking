@@ -197,7 +197,8 @@ Em `esp32_firmware/results/energy/` ou `stm32_firmware/results/energy/`:
   - `E_total_uJ`, `E_idle_uJ` e `E_net_uJ`: energia na janela, a parte do
     idle e a diferença entre as duas.
 - **`<modelo>_energy_report.txt`**: média ± desvio sobre os bursts, com o
-  erro padrão da média de Einf. Também compara o `t_inf` com o tempo de
+  erro padrão da média de Einf. Também traz a energia de uma inferência com
+  o idle incluído (`Einf + P_idle × t_inf`, ou seja `P_inf × t_inf`). Também compara o `t_inf` com o tempo de
   inferência do teste do DS2, se ele já tiver rodado.
 - **`<modelo>_current_profile.csv`** (com `--profile`): colunas `burst`,
   `t_us`, `I_mA`, `dI_mA` e `P_mW`, a corrente de cada burst no tempo

@@ -59,20 +59,23 @@ ready_timeout_seconds = 15
 # (the end-of-burst gap) after it ends.
 burst_timeout_seconds = 30
 
-# Fields summarized in the report: (column, label, format).
-summary_fields = (
-    ('n_inf', 'Inferences per burst', '.0f'),
-    ('t_inf_us', 'Inference time (us)', '.2f'),
-    ('E_inf_uJ', 'Einf, energy per inference above idle (uJ)', '.4f'),
-    ('E_inf_sigma_uJ', 'Einf noise floor per burst (uJ)', '.4f'),
-    ('I_idle_mA', 'Idle current (mA)', '.3f'),
-    ('V_idle_V', 'Idle voltage (V)', '.4f'),
-    ('P_idle_mW', 'Idle power (mW)', '.3f'),
-    ('I_inf_mA', 'Current while inferring, Iinst block mean (mA)', '.3f'),
-    ('dI_inf_mA', 'Current above idle while inferring (mA)', '.3f'),
-    ('P_inf_mW', 'Power while inferring (mW)', '.3f'),
-    ('dP_inf_mW', 'Power above idle while inferring (mW)', '.3f'),
-    ('E_net_uJ', 'Energy above idle per burst (uJ)', '.2f'),
+# Fields summarized in the report, in groups separated by a blank line:
+# (column, label, format). E_inf_total_uJ is not a BURST column; it is
+# computed from them (total_inference_energy).
+summary_groups = (
+    (('n_inf', 'Inferences per burst', '.0f'),
+     ('t_inf_us', 'Inference time (us)', '.2f')),
+    (('E_inf_total_uJ', 'Energy while inferring (uJ)', '.4f'),
+     ('E_inf_uJ', 'Energy per inference above idle (uJ)', '.4f'),
+     ('E_inf_sigma_uJ', 'Energy per inference noise floor (uJ)', '.4f')),
+    (('I_inf_mA', 'Current while inferring (mA)', '.3f'),
+     ('dI_inf_mA', 'Current above idle while inferring (mA)', '.3f')),
+    (('P_inf_mW', 'Power while inferring (mW)', '.3f'),
+     ('dP_inf_mW', 'Power above idle while inferring (mW)', '.3f')),
+    (('I_idle_mA', 'Idle current (mA)', '.3f'),
+     ('P_idle_mW', 'Idle power (mW)', '.3f'),
+     ('V_idle_V', 'Idle voltage (V)', '.4f')),
+    (('E_net_uJ', 'Energy above idle per burst (uJ)', '.2f'),),
 )
 
 
@@ -324,6 +327,12 @@ def ds2_inference_us(firmware_directory, model):
     return float(np.mean(times)) if times else None
 
 
+def total_inference_energy(burst):
+    """Energy of one inference with the idle floor included (uJ):
+    Einf + P_idle * t_inf, i.e. P_inf * t_inf."""
+    return burst['E_inf_uJ'] + burst['P_idle_mW'] * burst['t_inf_us'] / 1000.0
+
+
 def report_text(arguments, bursts, discarded, ds2_us):
     lines = [
         '==================================================',
@@ -332,17 +341,23 @@ def report_text(arguments, bursts, discarded, ds2_us):
         f'  Bursts: {len(bursts)} used'
         + (f', {discarded} discarded (no idle baseline or < 2 inferences)' if discarded else ''),
         '  Einf = (E_burst - P_idle * T) / N  (baseline subtraction, idle right before each burst)',
+        '  Energy while inferring = Einf + P_idle * t_inf  (idle floor included)',
         f'  INA226 shunt: {arguments.rshunt:g} ohm',
         '  Values: mean +- std over the bursts [min .. max]',
         '',
     ]
-    for key, label, spec in summary_fields:
-        stats = statistics(burst[key] for burst in bursts)
-        if stats is None:
-            lines.append(f'  {label}: nan')
-            continue
-        mean, std, low, high, _ = stats
-        lines.append(f'  {label}: {mean:{spec}} +- {std:{spec}} [{low:{spec}} .. {high:{spec}}]')
+    values = [dict(burst, E_inf_total_uJ=total_inference_energy(burst)) for burst in bursts]
+    for number, group in enumerate(summary_groups):
+        if number:
+            lines.append('')
+        for key, label, spec in group:
+            stats = statistics(burst[key] for burst in values)
+            if stats is None:
+                lines.append(f'  {label}: nan')
+                continue
+            mean, std, low, high, _ = stats
+            lines.append(f'  {label}: {mean:{spec}} +- {std:{spec}} '
+                         f'[{low:{spec}} .. {high:{spec}}]')
 
     energy = statistics(burst['E_inf_uJ'] for burst in bursts)
     if energy is not None and energy[4] > 1:
@@ -353,14 +368,17 @@ def report_text(arguments, bursts, discarded, ds2_us):
     if ds2_us is not None and timing is not None:
         lines.append(f'  DS2 test inference time (benchmark_serial.py): {ds2_us:.2f} us '
                      f'(this test: {timing[0]:.2f} us, from the sync edges)')
+    notes = []
     missed = sum(burst['missed'] for burst in bursts if math.isfinite(burst['missed']))
     dropped = sum(burst['stream_dropped'] for burst in bursts
                   if math.isfinite(burst['stream_dropped']))
     if missed:
-        lines.append(f'  Note: {missed:.0f} INA226 conversions missed by the logger '
+        notes.append(f'  Note: {missed:.0f} INA226 conversions missed by the logger '
                      '(already accounted for in the time weighting)')
     if dropped:
-        lines.append(f'  Note: {dropped:.0f} profile points dropped (use a larger --block)')
+        notes.append(f'  Note: {dropped:.0f} profile points dropped (use a larger --block)')
+    if notes:
+        lines += [''] + notes
     lines.append('==================================================')
     return '\n'.join(lines)
 
