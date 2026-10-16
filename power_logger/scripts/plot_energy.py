@@ -14,6 +14,11 @@ and saves, in power_logger/results/<mcu>/:
     summary_energy.png             Einf (log scale) and power above idle of
                                    every model, mean +- std over the bursts
 
+and, when both MCUs have results, in power_logger/results/:
+    comparison_energy.png          Einf of every model on both boards side by
+                                   side (log scale), with the Nucleo/ESP32-S3
+                                   ratio next to each model
+
 The profile has no voltage column: V = P / I, both from the same INA226
 reading. Each profile point is the block mean of --block INA226 conversions
 (~0.34 ms each), so inferences faster than that (RF, MLP) show as a plateau.
@@ -62,6 +67,21 @@ reference_color = '#eb6834'  # idle / mean reference lines
 ink = '#0b0b0b'
 muted_ink = '#5f5e5a'
 grid_color = '#e4e3df'
+# Comparison plot: one fixed hue per board (categorical slots 1 and 2).
+board_colors = {'esp32': '#2a78d6', 'stm32': '#eb6834'}
+
+
+def decimal_comma(text):
+    return text.replace(',', '\u2009').replace('.', ',')
+
+
+def energy_label(value):
+    """29 442 / 785 / 44,9: no scientific notation, decimal comma."""
+    return decimal_comma(f'{value:,.0f}' if value >= 100 else f'{value:.3g}')
+
+
+def ratio_label(value):
+    return decimal_comma(f'{value:.1f}') + '×'
 
 
 def style_axes(axes):
@@ -157,8 +177,9 @@ def plot_summary(summaries, title, destination, formats):
     labels = [model_label(model) for model, _ in summaries]
     positions = np.arange(len(summaries))
     panels = (
-        ('E_inf_uJ', 'Energia por inferência acima do idle (µJ)', True, '{:.4g}'),
-        ('dP_inf_mW', 'Potência acima do idle (mW)', False, '{:.1f}'),
+        ('E_inf_uJ', 'Energia por inferência acima do idle (µJ)', True, energy_label),
+        ('dP_inf_mW', 'Potência acima do idle (mW)', False,
+         lambda value: decimal_comma(f'{value:.1f}')),
     )
     figure, axes_list = plt.subplots(1, 2, figsize=(11, 0.6 * len(summaries) + 1.8))
     for axes, (name, xlabel, log_scale, fmt) in zip(axes_list, panels):
@@ -168,7 +189,7 @@ def plot_summary(summaries, title, destination, formats):
         axes.barh(positions, means, height=0.6, color=series_color, xerr=stds,
                   error_kw={'ecolor': muted_ink, 'elinewidth': 1, 'capsize': 2})
         for position, mean in zip(positions, means):
-            axes.annotate(fmt.format(mean), (mean, position), xytext=(4, 0),
+            axes.annotate(fmt(mean), (mean, position), xytext=(4, 0),
                           textcoords='offset points', va='center', color=ink, fontsize=8)
         if log_scale:
             axes.set_xscale('log')
@@ -180,6 +201,45 @@ def plot_summary(summaries, title, destination, formats):
         axes.grid(False, axis='y')
     axes_list[1].set_yticklabels([])
     figure.suptitle(title, color=ink, x=0.01, ha='left', fontsize=11)
+    save(figure, destination, formats)
+
+
+def plot_comparison(per_board, destination, formats):
+    """Einf of each model on both boards. per_board: {mcu: {label: E_inf array}}."""
+    boards = [mcu for mcu in ('esp32', 'stm32') if per_board.get(mcu)]
+    labels = [label for label in dict.fromkeys(model_label(m) for m in model_order)
+              if all(label in per_board[mcu] for mcu in boards)]
+    if len(boards) < 2 or not labels:
+        print('[comparison] needs the same models on both boards, skipping')
+        return
+    positions = np.arange(len(labels))
+    height = 0.38
+    figure, axes = plt.subplots(figsize=(8, 0.75 * len(labels) + 1.6))
+    for offset, mcu in zip((-height / 2 - 0.01, height / 2 + 0.01), boards):
+        values = [per_board[mcu][label] for label in labels]
+        means = np.array([v.mean() for v in values])
+        stds = np.array([v.std(ddof=1) if len(v) > 1 else 0.0 for v in values])
+        axes.barh(positions + offset, means, height=height, color=board_colors[mcu],
+                  xerr=stds, label=board_names[mcu],
+                  error_kw={'ecolor': muted_ink, 'elinewidth': 1, 'capsize': 2})
+        for position, mean in zip(positions + offset, means):
+            axes.annotate(energy_label(mean), (mean, position), xytext=(4, 0),
+                          textcoords='offset points', va='center', color=ink, fontsize=8)
+    # Nucleo / ESP32-S3 ratio, in a column right of the plot.
+    for position, label in zip(positions, labels):
+        ratio = per_board['stm32'][label].mean() / per_board['esp32'][label].mean()
+        axes.annotate(ratio_label(ratio), (1.02, position), xycoords=('axes fraction', 'data'),
+                      va='center', ha='left', color=ink, fontsize=9)
+    axes.annotate('Nucleo /\nESP32-S3', (1.02, -0.75), xycoords=('axes fraction', 'data'),
+                  va='bottom', ha='left', color=muted_ink, fontsize=8)
+    axes.set_xscale('log')
+    axes.set_yticks(positions, labels)
+    axes.invert_yaxis()
+    axes.set_xlabel('Energia por inferência acima do idle (µJ)', color=ink)
+    axes.margins(x=0.12)
+    style_axes(axes)
+    axes.grid(False, axis='y')
+    axes.legend(loc='lower right', frameon=False, labelcolor=ink, fontsize=9)
     save(figure, destination, formats)
 
 
@@ -199,7 +259,7 @@ def plot_mcu(mcu, arguments):
     models = find_models(results_directory, arguments.models)
     if not models:
         print(f'[{mcu}] no <model>_energy.csv in {results_directory}, skipping')
-        return
+        return {}
     output_directory.mkdir(parents=True, exist_ok=True)
     board = board_names[mcu]
     summaries = []
@@ -225,6 +285,7 @@ def plot_mcu(mcu, arguments):
     plot_summary(summaries, f'{board}: energia e potência por modelo (média ± desvio)',
                  output_directory / 'summary_energy', arguments.format)
     print(f'[{mcu}] saved to {output_directory}')
+    return {model_label(model): numeric['E_inf_uJ'] for model, numeric in summaries}
 
 
 def main():
@@ -239,8 +300,12 @@ def main():
     parser.add_argument('--output', default=str(repository_directory / 'power_logger' / 'results'),
                         help='Output folder (default power_logger/results)')
     arguments = parser.parse_args()
+    per_board = {}
     for mcu in (('esp32', 'stm32') if arguments.mcu == 'all' else (arguments.mcu,)):
-        plot_mcu(mcu, arguments)
+        per_board[mcu] = plot_mcu(mcu, arguments)
+    if arguments.mcu == 'all':
+        plot_comparison(per_board, Path(arguments.output) / 'comparison_energy',
+                        arguments.format)
 
 
 if __name__ == '__main__':
