@@ -8,7 +8,7 @@ convertidos para C/C++ e medidos na placa em três frentes:
 | Frente | O que se mede | Onde |
 |---|---|---|
 | **Desempenho de classificação** | acurácia, sensibilidade, especificidade, F1 e F-beta no conjunto de teste (DS2), com o modelo rodando **na placa** | `<mcu>_firmware/scripts/benchmark_serial.py` |
-| **Tempo e memória** | tempo de inferência e do filtro, vazão, tamanho do modelo (flash) e RAM | idem |
+| **Tempo e memória** | tempo de inferência e do filtro, vazão, tamanho do modelo (flash) e RAM | `<mcu>_firmware/scripts/benchmark_serial.py` |
 | **Corrente e energia** | energia por inferência (Einf), corrente e potência durante a inferência e em repouso | `power_logger/scripts/benchmark_energy.py` |
 
 ## Sumário
