@@ -8,10 +8,14 @@ pin before each inference. This script only talks to the power logger
 subtraction and answers one BURST line per burst.
 
 Usage (from the repository root):
-    python power_logger/scripts/benchmark_energy.py COM6 esp32 cnn
-    python power_logger/scripts/benchmark_energy.py COM6 stm32 rf --bursts 20
-    python power_logger/scripts/benchmark_energy.py COM6 esp32 cnn --profile
-    python power_logger/scripts/benchmark_energy.py COM6 esp32 cnn --check
+    python scripts/benchmark_energy.py COM6 esp32 cnn_rn
+    python scripts/benchmark_energy.py COM6 stm32 rf --bursts 20
+    python scripts/benchmark_energy.py COM6 esp32 cnn_mn2 --profile
+    python scripts/benchmark_energy.py COM6 esp32 cnn_mn2 --check
+    python scripts/benchmark_energy.py esp32 cnn_rn --report-only
+
+--report-only rewrites <model>_energy_report.txt from the saved
+<model>_energy.csv, without the logger or the board (no port needed).
 
 COM6 is the logger's port (not the board's). The first burst after the
 start is discarded (--warmup): the board may still be booting.
@@ -42,7 +46,14 @@ firmware_directories = {
     'stm32': repository_directory / 'stm32_firmware',
 }
 board_names = {'esp32': 'ESP32-S3', 'stm32': 'STM32 NUCLEO-F767ZI'}
-model_names = {'cnn': 'CNN', 'mlp': 'MLP', 'rf': 'Random Forest', 'svm': 'SVM'}
+model_names = {
+    'cnn_rn': 'CNN ResNet-1D',
+    'cnn_mn2': 'CNN MobileNetV2-1D',
+    'cnn_mn3': 'CNN MobileNetV3-1D',
+    'mlp': 'MLP',
+    'rf': 'Random Forest',
+    'svm': 'SVM',
+}
 
 baud_rate = 921600
 # The ESP32 ROM prints its boot message at this rate, whatever the firmware.
@@ -52,20 +63,23 @@ ready_timeout_seconds = 15
 # (the end-of-burst gap) after it ends.
 burst_timeout_seconds = 30
 
-# Fields summarized in the report: (column, label, format).
-summary_fields = (
-    ('n_inf', 'Inferences per burst', '.0f'),
-    ('t_inf_us', 'Inference time (us)', '.2f'),
-    ('E_inf_uJ', 'Einf, energy per inference above idle (uJ)', '.4f'),
-    ('E_inf_sigma_uJ', 'Einf noise floor per burst (uJ)', '.4f'),
-    ('I_idle_mA', 'Idle current (mA)', '.3f'),
-    ('V_idle_V', 'Idle voltage (V)', '.4f'),
-    ('P_idle_mW', 'Idle power (mW)', '.3f'),
-    ('I_inf_mA', 'Current while inferring, Iinst block mean (mA)', '.3f'),
-    ('dI_inf_mA', 'Current above idle while inferring (mA)', '.3f'),
-    ('P_inf_mW', 'Power while inferring (mW)', '.3f'),
-    ('dP_inf_mW', 'Power above idle while inferring (mW)', '.3f'),
-    ('E_net_uJ', 'Energy above idle per burst (uJ)', '.2f'),
+# Fields summarized in the report, in groups separated by a blank line:
+# (column, label, format). E_inf_total_uJ is not a BURST column; it is
+# computed from them (total_inference_energy).
+summary_groups = (
+    (('n_inf', 'Inferences per burst', '.0f'),
+     ('t_inf_us', 'Inference time (us)', '.2f')),
+    (('E_inf_total_uJ', 'Energy while inferring (uJ)', '.4f'),
+     ('E_inf_uJ', 'Energy per inference above idle (uJ)', '.4f'),
+     ('E_inf_sigma_uJ', 'Energy per inference noise floor (uJ)', '.4f')),
+    (('I_inf_mA', 'Current while inferring (mA)', '.3f'),
+     ('dI_inf_mA', 'Current above idle while inferring (mA)', '.3f')),
+    (('P_inf_mW', 'Power while inferring (mW)', '.3f'),
+     ('dP_inf_mW', 'Power above idle while inferring (mW)', '.3f')),
+    (('I_idle_mA', 'Idle current (mA)', '.3f'),
+     ('P_idle_mW', 'Idle power (mW)', '.3f'),
+     ('V_idle_V', 'Idle voltage (V)', '.4f')),
+    (('E_net_uJ', 'Energy above idle per burst (uJ)', '.2f'),),
 )
 
 
@@ -317,6 +331,12 @@ def ds2_inference_us(firmware_directory, model):
     return float(np.mean(times)) if times else None
 
 
+def total_inference_energy(burst):
+    """Energy of one inference with the idle floor included (uJ):
+    Einf + P_idle * t_inf, i.e. P_inf * t_inf."""
+    return burst['E_inf_uJ'] + burst['P_idle_mW'] * burst['t_inf_us'] / 1000.0
+
+
 def report_text(arguments, bursts, discarded, ds2_us):
     lines = [
         '==================================================',
@@ -325,17 +345,23 @@ def report_text(arguments, bursts, discarded, ds2_us):
         f'  Bursts: {len(bursts)} used'
         + (f', {discarded} discarded (no idle baseline or < 2 inferences)' if discarded else ''),
         '  Einf = (E_burst - P_idle * T) / N  (baseline subtraction, idle right before each burst)',
+        '  Energy while inferring = Einf + P_idle * t_inf  (idle floor included)',
         f'  INA226 shunt: {arguments.rshunt:g} ohm',
         '  Values: mean +- std over the bursts [min .. max]',
         '',
     ]
-    for key, label, spec in summary_fields:
-        stats = statistics(burst[key] for burst in bursts)
-        if stats is None:
-            lines.append(f'  {label}: nan')
-            continue
-        mean, std, low, high, _ = stats
-        lines.append(f'  {label}: {mean:{spec}} +- {std:{spec}} [{low:{spec}} .. {high:{spec}}]')
+    values = [dict(burst, E_inf_total_uJ=total_inference_energy(burst)) for burst in bursts]
+    for number, group in enumerate(summary_groups):
+        if number:
+            lines.append('')
+        for key, label, spec in group:
+            stats = statistics(burst[key] for burst in values)
+            if stats is None:
+                lines.append(f'  {label}: nan')
+                continue
+            mean, std, low, high, _ = stats
+            lines.append(f'  {label}: {mean:{spec}} +- {std:{spec}} '
+                         f'[{low:{spec}} .. {high:{spec}}]')
 
     energy = statistics(burst['E_inf_uJ'] for burst in bursts)
     if energy is not None and energy[4] > 1:
@@ -346,22 +372,63 @@ def report_text(arguments, bursts, discarded, ds2_us):
     if ds2_us is not None and timing is not None:
         lines.append(f'  DS2 test inference time (benchmark_serial.py): {ds2_us:.2f} us '
                      f'(this test: {timing[0]:.2f} us, from the sync edges)')
+    notes = []
     missed = sum(burst['missed'] for burst in bursts if math.isfinite(burst['missed']))
     dropped = sum(burst['stream_dropped'] for burst in bursts
                   if math.isfinite(burst['stream_dropped']))
     if missed:
-        lines.append(f'  Note: {missed:.0f} INA226 conversions missed by the logger '
+        notes.append(f'  Note: {missed:.0f} INA226 conversions missed by the logger '
                      '(already accounted for in the time weighting)')
     if dropped:
-        lines.append(f'  Note: {dropped:.0f} profile points dropped (use a larger --block)')
+        notes.append(f'  Note: {dropped:.0f} profile points dropped (use a larger --block)')
+    if notes:
+        lines += [''] + notes
     lines.append('==================================================')
     return '\n'.join(lines)
+
+
+def read_bursts(energy_file):
+    """Bursts saved by an earlier run (<model>_energy.csv), as dicts."""
+    if not energy_file.exists():
+        print(f'[ERROR] {energy_file} not found: run the test first.')
+        sys.exit(1)
+    with open(energy_file, newline='', encoding='utf-8') as handle:
+        return [{key: to_number(value) for key, value in row.items()
+                 if key not in ('mcu', 'model')}
+                for row in csv.DictReader(handle)]
+
+
+def saved_rshunt(report_file):
+    """Shunt resistor written in an earlier report, if there is one."""
+    if report_file.exists():
+        for line in report_file.read_text(encoding='utf-8').splitlines():
+            if line.strip().startswith('INA226 shunt:'):
+                return to_number(line.split(':')[1].split()[0])
+    return None
+
+
+def valid_bursts(bursts):
+    return [burst for burst in bursts
+            if math.isfinite(burst['E_inf_uJ']) and burst['n_inf'] >= 2]
+
+
+def write_report(arguments, firmware_directory, report_file, bursts):
+    valid = valid_bursts(bursts)
+    if not valid:
+        print('[ERROR] No valid burst (no idle baseline or no inferences counted).')
+        sys.exit(1)
+    text = report_text(arguments, valid, len(bursts) - len(valid),
+                       ds2_inference_us(firmware_directory, arguments.model))
+    print('\n' + text)
+    report_file.write_text(text + '\n', encoding='utf-8')
 
 
 def main():
     parser = argparse.ArgumentParser(
         description='Current/energy test of one model on one board, via the power logger.')
-    parser.add_argument('port', help='Serial port of the power logger ESP32, e.g. COM6 or /dev/ttyUSB1')
+    parser.add_argument('port', nargs='?',
+                        help='Serial port of the power logger ESP32, e.g. COM6 or /dev/ttyUSB1 '
+                             '(not needed with --report-only)')
     parser.add_argument('mcu', choices=tuple(firmware_directories),
                         help='Board under test (where the results are saved)')
     parser.add_argument('model', choices=tuple(model_names),
@@ -373,16 +440,21 @@ def main():
                         help='End-of-burst gap in ms: longer than one inference (default 1000)')
     parser.add_argument('--profile', action='store_true',
                         help='Also save the current profile (Iinst) of every burst')
-    parser.add_argument('--rshunt', type=float, default=0.1,
+    parser.add_argument('--rshunt', type=float, default=None,
                         help='Shunt resistor of the INA226 module in ohms, from its marking: '
                              'R100 = 0.1 (default), R050 = 0.05, R010 = 0.01')
     parser.add_argument('--block', type=int, default=1,
                         help='INA226 conversions averaged per profile point (default 1, ~0.34 ms)')
     parser.add_argument('--check', action='store_true',
                         help='Only print a few logger readings to check the wiring')
+    parser.add_argument('--report-only', action='store_true',
+                        help='Only rewrite the report from the saved <model>_energy.csv '
+                             '(no logger, no board)')
     parser.add_argument('--baud', type=int, default=baud_rate)
     arguments = parser.parse_args()
-    if arguments.rshunt <= 0:
+    if arguments.port is None and not arguments.report_only:
+        parser.error('the port of the power logger is required (e.g. COM6)')
+    if arguments.rshunt is not None and arguments.rshunt <= 0:
         parser.error('--rshunt must be > 0')
     if arguments.bursts < 1 or arguments.warmup < 0 or arguments.block < 1:
         parser.error('--bursts >= 1, --warmup >= 0 and --block >= 1')
@@ -392,6 +464,17 @@ def main():
     energy_file = results_directory / f'{arguments.model}_energy.csv'
     report_file = results_directory / f'{arguments.model}_energy_report.txt'
     profile_file = results_directory / f'{arguments.model}_current_profile.csv'
+
+    if arguments.report_only:
+        # The CSV already holds the measured values; the shunt is only
+        # written in the report, so keep the one of the earlier report.
+        if arguments.rshunt is None:
+            arguments.rshunt = saved_rshunt(report_file) or 0.1
+        write_report(arguments, firmware_directory, report_file, read_bursts(energy_file))
+        print(f'\n[DONE] Report rewritten from {energy_file}: {report_file}')
+        return
+    if arguments.rshunt is None:
+        arguments.rshunt = 0.1
 
     with serial.Serial(arguments.port, arguments.baud, timeout=1) as connection:
         reset_logger(connection)
@@ -427,9 +510,7 @@ def main():
             if profile_handle is not None:
                 profile_handle.close()
 
-    valid = [burst for burst in bursts
-             if math.isfinite(burst['E_inf_uJ']) and burst['n_inf'] >= 2]
-    if not valid:
+    if not valid_bursts(bursts):
         print('[ERROR] No valid burst (no idle baseline or no inferences counted).')
         sys.exit(1)
 
@@ -441,10 +522,7 @@ def main():
             writer.writerow([arguments.mcu, arguments.model, number]
                             + [burst[key] for key in fields[1:]])
 
-    text = report_text(arguments, valid, len(bursts) - len(valid),
-                       ds2_inference_us(firmware_directory, arguments.model))
-    print('\n' + text)
-    report_file.write_text(text + '\n', encoding='utf-8')
+    write_report(arguments, firmware_directory, report_file, bursts)
     saved = [energy_file, report_file] + ([profile_file] if arguments.profile else [])
     print('\n[DONE] Results saved to ' + ', '.join(str(path) for path in saved))
 

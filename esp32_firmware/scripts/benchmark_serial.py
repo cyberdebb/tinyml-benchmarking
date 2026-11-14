@@ -58,6 +58,16 @@ baud_rate = 115200
 # to cover transfer plus inference.
 read_timeout_seconds = 15
 class_names = ('N', 'S', 'V', 'F', 'Q')
+# Full names for the report, the same as power_logger/scripts/benchmark_energy.py.
+board_name = 'ESP32-S3'
+model_names = {
+    'cnn_rn': 'CNN ResNet-1D',
+    'cnn_mn2': 'CNN MobileNetV2-1D',
+    'cnn_mn3': 'CNN MobileNetV3-1D',
+    'mlp': 'MLP',
+    'rf': 'Random Forest',
+    'svm': 'SVM',
+}
 csv_header = ['beat_index', 'record', 'true_class', 'predicted_class', 'inference_us', 'filter_us']
 
 
@@ -203,9 +213,19 @@ def macro_scores(y_true, y_predicted, cm, labels, beta):
     }
 
 
+def spread(values, spec='.2f'):
+    """mean +- std [min .. max], the same layout as the energy report."""
+    std = values.std(ddof=1) if len(values) > 1 else 0.0
+    return (f'{values.mean():{spec}} +- {std:{spec}} '
+            f'[{values.min():{spec}} .. {values.max():{spec}}]')
+
+
 def summary_text(model, y_true, y_predicted, records, inference_us, filter_us, model_info):
-    inference_ms = np.array(inference_us) / 1000.0
-    filter_ms = np.array(filter_us) / 1000.0
+    # In microseconds, the resolution the firmware measures in (and the unit
+    # of the energy report): in ms, 2 decimals would round a fast model's
+    # std to 0.00.
+    inference_us = np.array(inference_us, dtype=float)
+    filter_us = np.array(filter_us, dtype=float)
 
     # 1. Acurácia
     accuracy = accuracy_score(y_true, y_predicted)
@@ -230,7 +250,7 @@ def summary_text(model, y_true, y_predicted, records, inference_us, filter_us, m
     throughput = 1.0 / mean_inference_sec if mean_inference_sec > 0 else 0.0
 
     lines = ['==================================================',
-             f'  Model: {model}']
+             f'  Inference test: {model_names[model]} on the {board_name}']
     if model_info:
         size_note = model_info.get('size_note', '')
         lines += [f"  Model size: {model_info['model_bytes'] / 1024:.1f} KB{size_note}",
@@ -251,14 +271,14 @@ def summary_text(model, y_true, y_predicted, records, inference_us, filter_us, m
     lines += [
         '  F1 per class:  ' + ' | '.join(f'{class_names[i]} {score:.4f}'
                                          for i, score in zip(SCORED_CLASS_IDS, class_f1)),
-        f'  Inference (ms): mean {inference_ms.mean():.2f} | '
-        f'min {inference_ms.min():.2f} | max {inference_ms.max():.2f} | '
-        f'p95 {np.percentile(inference_ms, 95):.2f}',
-        f'  SOS filter (ms): mean {filter_ms.mean():.2f}',
+        # Same layout as the energy report (benchmark_energy.py):
+        # mean +- std over the beats [min .. max].
+        f'  Inference time (us): {spread(inference_us)}',
+        f'  SOS filter (us):     {spread(filter_us)}',
         f'  Throughput:    {throughput:.2f} inferences/second',
         '==================================================',
     ]
-    report, _ = aami_report(f'{model} on the board', y_true, y_predicted, records)
+    report, _ = aami_report(f'{model_names[model]} on the {board_name}', y_true, y_predicted, records)
     return report + '\n\n' + '\n'.join(lines)
 
 
@@ -322,7 +342,7 @@ def format_duration(seconds):
 def main():
     parser = argparse.ArgumentParser(description='Benchmark a model running on the ESP32.')
     parser.add_argument('port', help='Serial port, e.g. COM3 or /dev/ttyUSB0')
-    parser.add_argument('model', choices=('cnn', 'mlp', 'rf', 'svm'),
+    parser.add_argument('model', choices=tuple(model_names),
                         help='Model currently flashed on the board (used for the output file)')
     parser.add_argument('--beats', type=int, default=None,
                         help='Send only a random sample of this many beats (quick check). '

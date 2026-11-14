@@ -31,12 +31,13 @@ from helpers import (build_representative_dataset, evaluate_tflite, macro_f1, pr
                      smoothed_class_weights)
 
 
+model_name = 'cnn_classifier_mobilenet_v2'
 output_directory = Path('models')
 
 # ---------------------------------------------------------------------------
 # Model
 # ---------------------------------------------------------------------------
-# MobileNet 1D
+# MobileNet 1D (V2)
 #
 # Changes compared to the previous version, all aimed at fitting on an MCU:
 #   - fewer filters (16 -> 64 instead of 32 -> 256)
@@ -57,7 +58,7 @@ output_directory = Path('models')
 #     network, so amplitude differences between patients/electrodes don't
 #     dominate (normalize_beats, and the same step in model_cnn.cc)
 #
-# Resulting model: roughly 100-150k parameters, ~150 KB after int8 quantization
+# Resulting model: roughly ~41k parameters, ~110 KB after int8 quantization
 # (previous version: ~8M parameters, ~32 MB in float32).
 # ---------------------------------------------------------------------------
 
@@ -176,7 +177,7 @@ def output_block(layer, inputs, rr_input, config):
     layer = Dense(config.dense_units, activation='relu')(layer)
     outputs = Dense(len(classes), activation='softmax')(layer)
     
-    model = Model(inputs=[inputs, rr_input], outputs=outputs, name='cnn_classifier_mn')
+    model = Model(inputs=[inputs, rr_input], outputs=outputs, name='cnn_classifier_mobilenet_v2')
 
     model.compile(
         optimizer=Adam(learning_rate=config.learning_rate),
@@ -208,11 +209,11 @@ def export_model(model, train_inputs):
     print('[EXPORT] Starting model export...')
     output_directory.mkdir(parents=True, exist_ok=True)
 
-    keras_path = output_directory / 'cnn_classifier_mn.keras'
-    tflite_path = output_directory / 'cnn_classifier_mn.tflite'
+    keras_path = output_directory / f'{model_name}.keras'
+    tflite_path = output_directory / f'{model_name}.tflite'
     model.save(keras_path)
 
-    # OPIMIZATIONS
+    # OPTIMIZATIONS
     converter = tf.lite.TFLiteConverter.from_keras_model(model)
     converter.optimizations = [tf.lite.Optimize.DEFAULT]
     converter.representative_dataset = build_representative_dataset(
@@ -296,7 +297,7 @@ def build_training_callbacks(config, validation_inputs, yval):
             write_images=True,
         ),
         ModelCheckpoint(
-            str(output_directory / 'cnn_classifier_mn.keras'),
+            str(output_directory / f'{model_name}.keras'),
             monitor='val_macro_f1',
             mode='max',
             save_best_only=True,
@@ -382,7 +383,7 @@ def main():
         min_lr=5e-5,
         checkpoint_path=None,
         resume_epoch=0,
-        trained_model=str(output_directory / 'cnn_classifier_mn.keras'),
+        trained_model=str(output_directory / f'{model_name}.keras'),
         export_only=False,
     )
     print('[CONFIG] CNN configuration:')

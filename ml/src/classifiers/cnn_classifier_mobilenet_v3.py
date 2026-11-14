@@ -13,10 +13,12 @@ from keras.layers import (
     Activation,
     BatchNormalization,
     Conv1D,
+    DepthwiseConv1D,
     Dense,
     Dropout,
     GlobalAveragePooling1D,
     Input,
+    Multiply,
     add,
     concatenate,
 )
@@ -30,119 +32,153 @@ from helpers import (build_representative_dataset, evaluate_tflite, macro_f1, pr
                      smoothed_class_weights)
 
 
+model_name = 'cnn_classifier_mobilenet_v3'
 output_directory = Path('models')
 
 # ---------------------------------------------------------------------------
 # Model
 # ---------------------------------------------------------------------------
-# Compact 1D pre-activation ResNet.
+# MobileNet 1D (V3)
 #
-# Changes compared to the previous version, all aimed at fitting on an MCU:
-#   - fewer filters (16 -> 64 instead of 32 -> 256)
-#   - smaller kernel (7 instead of 16)
-#   - fewer residual blocks (6 instead of 15)
-#   - 1x1 convolution shortcut instead of MaxPooling + Lambda(zeropad),
-#     which avoids custom layers and extra TFLite ops (ZEROS_LIKE, CONCATENATION)
-#   - GlobalAveragePooling1D before the classifier
-#   - a second input with the beat's RR features (load_data.RR_FEATURES,
-#     log ratios around 0): the waveform alone doesn't show that a beat
-#     came early, which is what separates S from N. The RR features go
-#     through their own small branch (BatchNormalization + Dense, see
-#     output_block) before being joined to the pooled morphology features:
-#     joined raw, 4 values next to 64 learned ones, the network mostly
-#     ignored them (S sensitivity ~17% vs ~63% for the MLP on the same RR
-#     features)
-#   - each beat is standardized (zero mean, unit variance) before the
-#     network, so amplitude differences between patients/electrodes don't
-#     dominate (normalize_beats, and the same step in model_cnn.cc)
+# Changes compared to the V2 version:
+#   - hard-swish activation in the stem, the deeper blocks and the head
+#     (ReLU kept in the early, high-resolution blocks, as in the paper)
+#   - Squeeze-and-Excitation (SE) after the depthwise conv in the deeper
+#     blocks, with hard-sigmoid gating and squeeze = exp_channels / 4
+#     rounded to a multiple of 8
+#   - per-block table (kernel, expansion channels, output channels, SE,
+#     activation, stride) instead of a fixed expansion factor
+#   - same block skeleton as the V2 version (dropout after the depthwise
+#     conv in every block, identity or 1x1 projection shortcut in every
+#     block), so the comparison isolates the V3 changes
+#   - "efficient last stage": 1x1 conv + hard-swish before the global
+#     pooling, hard-swish dense layer after it
 #
-# Resulting model: roughly 100-150k parameters, ~150 KB after int8 quantization
-# (previous version: ~8M parameters, ~32 MB in float32).
+# Kept from the V2 version:
+#   - RR features through their own branch (BatchNormalization + Dense)
+#     before being joined to the pooled morphology features
+#   - per-beat standardization (normalize_beats / model_cnn.cc)
 # ---------------------------------------------------------------------------
 
-def conv_layer(filters, kernel_size, strides=1):
-    return Conv1D(
-        filters=filters,
-        kernel_size=kernel_size,
-        padding='same',
-        strides=strides,
-        kernel_initializer='he_normal',
-    )
+# (kernel, exp_channels, out_channels, use_se, activation, stride)
+# Expansion 2x (exp = 2 * in, as in the V2 version) instead of the paper's
+# ~3-6x, so the model stays close to the V2 version in size and MACs
+# (~69k weights / ~2.3M MACs vs ~40k / ~1.9M): the comparison measures the
+# V3 changes (SE, hard-swish, kernels), not a bigger network.
+BNECK_CONFIG = [
+    (7, 16,  16, False, 'relu',   1),   # 256, no expansion, no SE at full resolution (as in V3-Large)
+    (7, 32,  16, False, 'relu',   2),   # 256 -> 128
+    (7, 32,  16, False, 'relu',   1),
+    (5, 32,  32, True,  'hswish', 2),   # 128 -> 64
+    (5, 64,  32, True,  'hswish', 1),
+    (5, 64,  64, True,  'hswish', 2),   # 64 -> 32
+    (5, 128, 64, True,  'hswish', 1),
+]
 
 
-def first_conv_block(inputs, config):
-    layer = conv_layer(config.base_filters, config.kernel_size)(inputs)
-    layer = BatchNormalization()(layer)
-    layer = Activation('relu')(layer)
-
-    shortcut = layer
-
-    layer = conv_layer(config.base_filters, config.kernel_size)(layer)
-    layer = BatchNormalization()(layer)
-    layer = Activation('relu')(layer)
-    layer = Dropout(config.drop_rate)(layer)
-    layer = conv_layer(config.base_filters, config.kernel_size)(layer)
-    return add([shortcut, layer])
+def make_divisible(value, divisor=8, min_value=None):
+    """Rounds a channel count to a multiple of divisor (as in MobileNetV3)."""
+    min_value = min_value or divisor
+    new_value = max(min_value, int(value + divisor / 2) // divisor * divisor)
+    if new_value < 0.9 * value:
+        new_value += divisor
+    return new_value
 
 
-def residual_block(layer, filters, strides, config):
-    in_filters = layer.shape[-1]
+def apply_activation(x, kind):
+    if kind == 'hswish':
+        return Activation('hard_silu')(x)  # x * relu6(x + 3) / 6 (alias: hard_swish)
+    if kind == 'relu':
+        return Activation('relu')(x)
+    raise ValueError(f'Unknown activation: {kind}')
 
-    # Projection shortcut when the shape changes, identity otherwise.
-    if strides != 1 or in_filters != filters:
-        shortcut = Conv1D(
-            filters=filters,
-            kernel_size=1,
-            padding='same',
-            strides=strides,
-            kernel_initializer='he_normal',
-        )(layer)
-    else:
+
+def squeeze_excite(x, ratio=0.25):
+    """Squeeze-and-Excitation: reweights each channel by a gate computed
+    from the channel's global average."""
+    channels = x.shape[-1]
+    squeeze = make_divisible(channels * ratio)
+    s = GlobalAveragePooling1D(keepdims=True)(x)
+    s = Conv1D(squeeze, kernel_size=1, padding='same')(s)
+    s = Activation('relu')(s)
+    s = Conv1D(channels, kernel_size=1, padding='same')(s)
+    s = Activation('hard_sigmoid')(s)  # relu6(x + 3) / 6
+    return Multiply()([x, s])
+
+
+def bneck_block(layer, kernel_size, exp_channels, out_channels, use_se, activation, strides,
+                drop_rate):
+    """MobileNetV3 bottleneck: expand (1x1) -> depthwise -> SE -> project (1x1, linear)."""
+    in_channels = layer.shape[-1]
+    x = layer
+
+    if exp_channels != in_channels:
+        x = Conv1D(exp_channels, kernel_size=1, padding='same', use_bias=False,
+                   kernel_initializer='he_normal')(x)
+        x = BatchNormalization()(x)
+        x = apply_activation(x, activation)
+
+    x = DepthwiseConv1D(kernel_size=kernel_size, strides=strides, padding='same',
+                        use_bias=False, depthwise_initializer='he_normal')(x)
+    x = BatchNormalization()(x)
+    x = apply_activation(x, activation)
+
+    if use_se:
+        x = squeeze_excite(x)
+
+    # Same regularization as the V2 version (dropout in every block)
+    if drop_rate > 0:
+        x = Dropout(drop_rate)(x)
+
+    x = Conv1D(out_channels, kernel_size=1, padding='same', use_bias=False,
+               kernel_initializer='he_normal')(x)
+    x = BatchNormalization()(x)
+
+    # Same shortcuts as the V2 version: identity when the shape matches,
+    # linear 1x1 projection otherwise
+    if strides == 1 and in_channels == out_channels:
         shortcut = layer
+    else:
+        shortcut = Conv1D(out_channels, kernel_size=1, strides=strides, padding='same',
+                          use_bias=False, kernel_initializer='he_normal')(layer)
+        shortcut = BatchNormalization()(shortcut)
+    return add([shortcut, x])
 
-    layer = BatchNormalization()(layer)
-    layer = Activation('relu')(layer)
-    layer = conv_layer(filters, config.kernel_size, strides)(layer)
-    layer = BatchNormalization()(layer)
-    layer = Activation('relu')(layer)
-    layer = Dropout(config.drop_rate)(layer)
-    layer = conv_layer(filters, config.kernel_size)(layer)
-    return add([shortcut, layer])
+
+def stem(inputs, config):
+    x = Conv1D(config.base_filters, kernel_size=config.kernel_size, padding='same', strides=1,
+               use_bias=False, kernel_initializer='he_normal')(inputs)
+    x = BatchNormalization()(x)
+    return apply_activation(x, 'hswish')
 
 
 def main_loop_blocks(layer, config):
-    filters = config.base_filters
-    for block_index in range(config.n_blocks):
-        # Downsample and widen every other block: 256 -> 128 -> 64 -> 32 samples.
-        if block_index % 2 == 0:
-            strides = 2
-            if block_index > 0:
-                filters *= 2
-        else:
-            strides = 1
-        layer = residual_block(layer, filters, strides, config)
+    for kernel_size, exp_channels, out_channels, use_se, activation, strides in config.bneck:
+        layer = bneck_block(layer, kernel_size, exp_channels, out_channels,
+                            use_se, activation, strides, config.drop_rate)
     return layer
 
 
 def output_block(layer, inputs, rr_input, config):
+    # Efficient last stage: widen with a 1x1 conv before pooling
+    layer = Conv1D(config.last_channels, kernel_size=1, padding='same', use_bias=False,
+                   kernel_initializer='he_normal')(layer)
     layer = BatchNormalization()(layer)
-    layer = Activation('relu')(layer)
+    layer = apply_activation(layer, 'hswish')
     layer = GlobalAveragePooling1D()(layer)
-    # RR branch: BatchNormalization puts the RR features on the same scale
-    # as the morphology features, and the Dense layer lets the network build
-    # its own combinations of them (e.g. early beat AND followed by a pause).
+
+    # RR branch
     rr_layer = BatchNormalization()(rr_input)
     rr_layer = Dense(config.rr_units, activation='relu')(rr_layer)
     layer = concatenate([layer, rr_layer])
-    layer = Dense(config.dense_units, activation='relu')(layer)
+
+    layer = Dense(config.dense_units)(layer)
+    layer = apply_activation(layer, 'hswish')
     outputs = Dense(len(classes), activation='softmax')(layer)
-    # The .tflite orders its inputs by name, not in this order:
-    # model_cnn.cc and evaluate_tflite() find each input by size, and
-    # the calibration data is fed by name (export_model).
-    model = Model(inputs=[inputs, rr_input], outputs=outputs, name='cnn_classifier')
+
+    model = Model(inputs=[inputs, rr_input], outputs=outputs, name='cnn_classifier_mobilenet_v3')
 
     model.compile(
-        # The previous learning rate (0.1) is far too high for Adam.
         optimizer=Adam(learning_rate=config.learning_rate),
         loss='sparse_categorical_crossentropy',
         metrics=['accuracy'],
@@ -152,13 +188,15 @@ def output_block(layer, inputs, rr_input, config):
 
 
 def cnn_model(config):
-    print('[MODEL] Building CNN model...')
+    print('[MODEL] Building MobileNetV3-1D model...')
     inputs = Input(shape=(config.input_size, 1), name='input')
     rr_input = Input(shape=(len(RR_FEATURES),), name='rr')
-    layer = first_conv_block(inputs, config)
+
+    layer = stem(inputs, config)
     layer = main_loop_blocks(layer, config)
     model = output_block(layer, inputs, rr_input, config)
-    print(f'[MODEL] CNN model built and compiled ({model.count_params():,} parameters).')
+
+    print(f'[MODEL] MobileNetV3 model built and compiled ({model.count_params():,} parameters).')
     return model
 
 
@@ -170,11 +208,11 @@ def export_model(model, train_inputs):
     print('[EXPORT] Starting model export...')
     output_directory.mkdir(parents=True, exist_ok=True)
 
-    keras_path = output_directory / 'cnn_classifier.keras'
-    tflite_path = output_directory / 'cnn_classifier.tflite'
+    keras_path = output_directory / f'{model_name}.keras'
+    tflite_path = output_directory / f'{model_name}.tflite'
     model.save(keras_path)
 
-    # OPIMIZATIONS
+    # OPTIMIZATIONS
     converter = tf.lite.TFLiteConverter.from_keras_model(model)
     converter.optimizations = [tf.lite.Optimize.DEFAULT]
     converter.representative_dataset = build_representative_dataset(
@@ -188,6 +226,10 @@ def export_model(model, train_inputs):
     size_kb = len(tflite_model) / 1024
     print(f'Keras model saved to {keras_path}')
     print(f'TFLite model saved to {tflite_path} ({size_kb:.1f} KB)')
+
+    # Lists the TFLite ops, to register them in the op resolver of model_cnn.cc
+    tf.lite.experimental.Analyzer.analyze(model_content=tflite_model)
+
     print('[EXPORT] Model export completed.')
     return tflite_path
 
@@ -206,7 +248,6 @@ def normalize_beats(X):
 
 
 def prepare_inputs(dataset):
-    """Model inputs ([beats, rr], in the model's input order) and labels."""
     beats = np.expand_dims(normalize_beats(dataset.X), axis=2)
     rr = np.asarray(dataset.rr, dtype=np.float32)
     if np.any(np.isnan(beats)) or np.any(np.isnan(rr)) or np.any(np.isnan(dataset.y)):
@@ -259,7 +300,7 @@ def build_training_callbacks(config, validation_inputs, yval):
             write_images=True,
         ),
         ModelCheckpoint(
-            str(output_directory / 'cnn_classifier.keras'),
+            str(output_directory / f'{model_name}.keras'),
             monitor='val_macro_f1',
             mode='max',
             save_best_only=True,
@@ -332,9 +373,10 @@ def main():
         split=True,
         input_size=256,
         base_filters=16,
-        kernel_size=7,
-        n_blocks=6,
-        drop_rate=0.2,
+        kernel_size=7,          # stem kernel; block kernels come from bneck
+        bneck=BNECK_CONFIG,
+        last_channels=64,       # 1x1 conv before pooling (128 in the paper's proportion)
+        drop_rate=0.2,          # after the depthwise conv of every block, as in V2
         dense_units=32,
         rr_units=16,
         feature='MLII',
@@ -345,8 +387,8 @@ def main():
         min_lr=5e-5,
         checkpoint_path=None,
         resume_epoch=0,
-        trained_model=str(output_directory / 'cnn_classifier.keras'),
-        export_only=False,  # True: skip training and re-export trained_model
+        trained_model=str(output_directory / f'{model_name}.keras'),
+        export_only=False,
     )
     print('[CONFIG] CNN configuration:')
     print(vars(config))
