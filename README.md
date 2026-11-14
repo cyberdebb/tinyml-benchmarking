@@ -263,4 +263,4 @@ Os relatórios podem ser refeitos a partir dos CSVs, sem a placa:
   - CNN: [physhik/ecg-mit-bih](https://github.com/physhik/ecg-mit-bih)
   - MLP: [carrliitos/ecg_classification](https://github.com/carrliitos/ecg_classification)
   - Random Forest: [crs4/rf-ecg-heartbeat-classification](https://github.com/crs4/rf-ecg-heartbeat-classification)
-  - SVM: [mondejar/ecg-classification](https://github.com/mondejar/ecg-classification.vscode)
+  - SVM: [mondejar/ecg-classification](https://github.com/mondejar/ecg-classification)
