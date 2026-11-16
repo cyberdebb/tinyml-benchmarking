@@ -10,12 +10,17 @@ of training and test.
 
 Run from the repository root (records are downloaded on first use, like in
 training):
-    python ml/src/plot_beat_examples.py
+    python ml/src/scripts/plot_beat_examples.py
 Saves ml/figures/beat_examples.png
 """
 
 import argparse
 from pathlib import Path
+import sys
+
+
+PROJECT_DIRECTORY = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_DIRECTORY / 'src'))
 
 import matplotlib
 
@@ -105,9 +110,9 @@ def plot(beats, counts, destination):
                 axes_.tick_params(labelbottom=True)
     figure.tight_layout()
     destination.parent.mkdir(parents=True, exist_ok=True)
-    for extension in ('png'):
-        figure.savefig(destination.with_suffix('.' + extension), dpi=200, bbox_inches='tight')
-    print(f'[DONE] Saved {destination}.png')
+    output_path = destination if destination.suffix.lower() == '.png' else destination.with_suffix('.png')
+    figure.savefig(output_path, dpi=200, bbox_inches='tight')
+    print(f'[DONE] Saved {output_path}')
 
 
 def main():
@@ -115,7 +120,7 @@ def main():
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--data-dir', default=str(load_data.data_directory),
                         help='MIT-BIH folder (default: the one used in training)')
-    parser.add_argument('--output', default=str(load_data.project_directory / 'figures' / 'beat_examples'))
+    parser.add_argument('--output', default=str(PROJECT_DIRECTORY / 'figures' / 'beat_examples'))
     arguments = parser.parse_args()
     beats, counts = collect_beats(load_data.ALL_RECORDS, arguments.data_dir)
     for symbol, count in counts.items():
