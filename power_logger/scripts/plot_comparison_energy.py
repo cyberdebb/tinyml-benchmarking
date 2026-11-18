@@ -16,7 +16,7 @@ and saves, in power_logger/results/<mcu>/:
 
 and, when both MCUs have results, in power_logger/results/:
     comparison_energy.png          Einf of every model on both boards side by
-                                   side (log scale), with the Nucleo/ESP32-S3
+                                   side (log scale), with the NUCLEO/ESP32-S3
                                    ratio next to each model
 
 The profile has no voltage column: V = P / I, both from the same INA226
@@ -75,9 +75,16 @@ def decimal_comma(text):
     return text.replace(',', '\u2009').replace('.', ',')
 
 
-def energy_label(value):
-    """29 442 / 785 / 44,9: no scientific notation, decimal comma."""
-    return decimal_comma(f'{value:,.0f}' if value >= 100 else f'{value:.3g}')
+def energy_label(value, std=None):
+    """Mean rounded to its uncertainty, like the tables: the std keeps one
+    significant digit (two when it starts with 1) and the mean is rounded to
+    the same decimal place. 29 442 ± 30 -> 29 440; 152,643 ± 0,12 -> 152,64."""
+    if std is None or not np.isfinite(std) or std <= 0:
+        return decimal_comma(f'{value:,.0f}' if value >= 100 else f'{value:.3g}')
+    exponent = int(np.floor(np.log10(std)))
+    leading = int(round(std / 10 ** exponent, 6))
+    decimals = (2 if leading == 1 else 1) - 1 - exponent
+    return decimal_comma(f'{round(value, decimals):,.{max(decimals, 0)}f}')
 
 
 def ratio_label(value):
@@ -177,19 +184,18 @@ def plot_summary(summaries, title, destination, formats):
     labels = [model_label(model) for model, _ in summaries]
     positions = np.arange(len(summaries))
     panels = (
-        ('E_inf_uJ', 'Energia por inferência acima do idle (µJ)', True, energy_label),
-        ('dP_inf_mW', 'Potência acima do idle (mW)', False,
-         lambda value: decimal_comma(f'{value:.1f}')),
+        ('E_inf_uJ', 'Energia por inferência acima do idle (µJ)', True),
+        ('dP_inf_mW', 'Potência acima do idle (mW)', False),
     )
     figure, axes_list = plt.subplots(1, 2, figsize=(11, 0.6 * len(summaries) + 1.8))
-    for axes, (name, xlabel, log_scale, fmt) in zip(axes_list, panels):
+    for axes, (name, xlabel, log_scale) in zip(axes_list, panels):
         means = np.array([rows[name].mean() for _, rows in summaries])
         stds = np.array([rows[name].std(ddof=1) if len(rows[name]) > 1 else 0.0
                          for _, rows in summaries])
         axes.barh(positions, means, height=0.6, color=series_color, xerr=stds,
                   error_kw={'ecolor': muted_ink, 'elinewidth': 1, 'capsize': 2})
-        for position, mean in zip(positions, means):
-            axes.annotate(fmt(mean), (mean, position), xytext=(4, 0),
+        for position, mean, std in zip(positions, means, stds):
+            axes.annotate(energy_label(mean, std), (mean, position), xytext=(4, 0),
                           textcoords='offset points', va='center', color=ink, fontsize=8)
         if log_scale:
             axes.set_xscale('log')
@@ -222,15 +228,15 @@ def plot_comparison(per_board, destination, formats):
         axes.barh(positions + offset, means, height=height, color=board_colors[mcu],
                   xerr=stds, label=board_names[mcu],
                   error_kw={'ecolor': muted_ink, 'elinewidth': 1, 'capsize': 2})
-        for position, mean in zip(positions + offset, means):
-            axes.annotate(energy_label(mean), (mean, position), xytext=(4, 0),
+        for position, mean, std in zip(positions + offset, means, stds):
+            axes.annotate(energy_label(mean, std), (mean, position), xytext=(4, 0),
                           textcoords='offset points', va='center', color=ink, fontsize=8)
-    # Nucleo / ESP32-S3 ratio, in a column right of the plot.
+    # NUCLEO / ESP32-S3 ratio, in a column right of the plot.
     for position, label in zip(positions, labels):
         ratio = per_board['stm32'][label].mean() / per_board['esp32'][label].mean()
         axes.annotate(ratio_label(ratio), (1.02, position), xycoords=('axes fraction', 'data'),
                       va='center', ha='left', color=ink, fontsize=9)
-    axes.annotate('Nucleo /\nESP32-S3', (1.02, -0.75), xycoords=('axes fraction', 'data'),
+    axes.annotate('NUCLEO /\nESP32-S3', (1.02, -0.75), xycoords=('axes fraction', 'data'),
                   va='bottom', ha='left', color=muted_ink, fontsize=8)
     axes.set_xscale('log')
     axes.set_yticks(positions, labels)
