@@ -249,6 +249,10 @@ Os resultados ficam em cada firmware (e não vão para o git):
 Os relatórios podem ser refeitos a partir dos CSVs, sem a placa:
 `benchmark_serial.py ... --resume` e `benchmark_energy.py <mcu> <modelo> --report-only`.
 
+### Diagrama de sequência
+
+<img width="5345" height="5990" alt="diagrama_de_sequencia_metodologia" src="https://github.com/user-attachments/assets/5c8fa6a1-0078-4265-8877-fad714c2bb45" />
+
 ## Referências
 
 - Dataset: [MIT-BIH Arrhythmia Database](https://physionet.org/content/mitdb/1.0.0/) (PhysioNet)
