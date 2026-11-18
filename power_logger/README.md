@@ -125,6 +125,8 @@ Conexões da placa ESP32-S3 utilizada na inferência:
 | Terra comum (GND) | ESP32-S3 GND | GND comum | Nó único com o ESP32 auxiliar e o INA226 |
 | Sincronismo | ESP32-S3 GPIO4 (saída) | ESP32 auxiliar GPIO4 (entrada) | Invertido antes de cada inferência; o logger conta as bordas para marcar início e fim de cada rajada |
 
+<img width="1149" height="1126" alt="diagrama_conexao_hardware_esp32" src="https://github.com/user-attachments/assets/d47dcd7e-97b0-48ca-b0cf-6eb189401d40" />
+
 ### STM32 NUCLEO-F767ZI
 
 Conexões da placa STM32 NUCLEO-F767ZI utilizada na inferência:
@@ -134,6 +136,8 @@ Conexões da placa STM32 NUCLEO-F767ZI utilizada na inferência:
 | Alimentação do STM32 (saída do *shunt*) | INA226 IN- | NUCLEO JP5 (IDD), pad do lado do STM32 | Jumper IDD removido; pad do lado do regulador sem conexão; ST-LINK permanece conectado por USB, fora do domínio medido pelo INA226 |
 | Terra comum (GND) | NUCLEO GND | GND comum | Nó único com o ESP32 auxiliar e o INA226 (qualquer GND, não o AGND) |
 | Sincronismo | NUCLEO PF13 (D7) (saída) | ESP32 auxiliar GPIO4 (entrada) | Invertido antes de cada inferência; o logger conta as bordas para marcar início e fim de cada rajada |
+
+<img width="1544" height="1580" alt="diagrama_conexao_hardware_stm32" src="https://github.com/user-attachments/assets/052f14c0-a8a5-4c75-a5e6-1d0da2b70682" />
 
 Na STM32 o **USB do ST-LINK fica conectado durante a medição** (são dois
 cabos USB: o do ESP32 auxiliar e o da Nucleo):
