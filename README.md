@@ -1,4 +1,4 @@
-# Benchmarking de modelos TinyML para detecção de arritmias cardíacas
+# Benchmarking de Modelos TinyML para Detecção de Arritmias Cardíacas
 
 Comparação de **seis classificadores de batimentos de ECG** rodando em **dois
 microcontroladores**: um ESP32-S3 (Xtensa LX7) e uma STM32 NUCLEO-F767ZI
