@@ -31,39 +31,39 @@ def print_results(config, model, Xval, yval, classes, records=None):
 
 def plot_beat(beat_array, class_id=None):
     """
-    Plota um único batimento cardíaco segmentado.
+    Plot a single segmented heartbeat.
     
-    Parâmetros:
-    beat_array: array 1D com o sinal do batimento
-    class_id: (opcional) ID da classe (0 a 4) para exibir no título
+    Parameters:
+    beat_array: 1D array containing the beat signal
+    class_id: optional class ID (0 to 4) to show in the title
     """
-    # Mapeamento reverso para exibir o nome da classe legível
+    # Reverse mapping used to display a readable class name.
     class_names = {
         0: "Normal (N)",
         1: "Supraventricular (S)",
         2: "Ventricular (V)",
-        3: "Fusão (F)",
-        4: "Desconhecido (Q)"
+        3: "Fusion (F)",
+        4: "Unknown (Q)"
     }
     
     plt.figure(figsize=(8, 4))
     
-    # Plota o sinal
+    # Plot the signal.
     plt.plot(beat_array, color='#1f77b4', linewidth=2)
     
-    # Configura o título com base na classe fornecida
-    title = "Batimento Segmentado"
+    # Set the title from the supplied class.
+    title = "Segmented Beat"
     if class_id is not None and class_id in class_names:
         title += f" - {class_names[class_id]}"
         
     plt.title(title)
-    plt.xlabel("Amostras da Janela")
-    plt.ylabel("Amplitude Normalizada")
+    plt.xlabel("Window Samples")
+    plt.ylabel("Normalized Amplitude")
     plt.grid(True, linestyle='--', alpha=0.7)
     
-    # Desenha uma linha vertical no centro indicando onde está o pico R
+    # Draw a vertical line at the center, marking the R peak.
     center = len(beat_array) // 2
-    plt.axvline(x=center, color='red', linestyle='--', label='Pico R (Centro)', alpha=0.6)
+    plt.axvline(x=center, color='red', linestyle='--', label='R Peak (Center)', alpha=0.6)
     plt.legend()
     
     plt.tight_layout()

@@ -13,30 +13,27 @@ project_directory = Path(__file__).resolve().parent.parent
 data_directory = project_directory / 'data' / 'mitdb'
 cache_directory = project_directory / 'data' / 'cache'
 
-# Frequencia de amostragem do MIT-BIH (Hz)
+# MIT-BIH sampling frequency (Hz)
 sampling_rate = 360
 
-# 0. Divisao inter-paciente (de Chazal et al., 2004)
+# 0. Inter-patient split (Chazal et al., 2004)
 #
-# Um split aleatorio por batimento coloca batimentos do mesmo paciente no
-# treino e no teste, e a acuracia sai inflada (o modelo reconhece o paciente,
-# nao a arritmia). Aqui cada registro (paciente) fica inteiro em um unico
-# conjunto:
-#   - DS1: treino. Uma parte dos registros e separada como validacao (early
-#     stopping / escolha do modelo).
-#   - DS2: teste. Nunca e usado no treino nem na escolha do modelo; e o
-#     conjunto das metricas finais e do benchmark nas placas
-#     (benchmark_serial.py).
+# A random split by beat places beats from the same patient in both training
+# and test sets, inflating accuracy (the model recognizes the patient, not the
+# arrhythmia). Here each record (patient) remains entirely in one split:
+#   - DS1: training. Some records are held out for validation (early stopping
+#     / model selection).
+#   - DS2: test. Never used for training or model selection; it is the set for
+#     final metrics and board benchmarks (benchmark_serial.py).
 #
-# Registros com marcapasso (102, 104, 107, 217): a AAMI (EC57) e de Chazal
-# os deixam de fora, e INCLUDE_PACED_RECORDS = False segue esse protocolo,
-# para que os resultados sejam comparaveis com a literatura. Sem eles, a
-# classe Q fica so com os poucos batimentos 'Q' dos outros registros: nao da
-# para aprender nem avaliar Q, e as metricas principais sao as de N, S, V e F
-# (SCORED_CLASSES). Com True, os dois registros com marcapasso que tem MLII
-# entram, um de cada lado (217 no treino, 107 no teste; 102 e 104 nao tem
-# MLII) -- mas ai a classe Q inteira vem de um unico paciente em cada
-# conjunto, entao o resultado de Q mede so o quanto o 107 se parece com o 217.
+# Paced records (102, 104, 107, 217): AAMI (EC57) and Chazal exclude them,
+# and INCLUDE_PACED_RECORDS = False follows that protocol so results remain
+# comparable with the literature. Without them, class Q has only a few 'Q'
+# beats from other records: there are too few to learn or evaluate Q, and the
+# main metrics are for N, S, V, and F (SCORED_CLASSES). With True, the two
+# paced records with MLII are included, one on each side (217 in training, 107
+# in testing; 102 and 104 have no MLII). However, class Q then comes entirely
+# from one patient in each split, so Q measures only how much 107 resembles 217.
 INCLUDE_PACED_RECORDS = False
 
 DS1_RECORDS = (
@@ -47,79 +44,77 @@ DS2_RECORDS = (
     '100', '103', '105', '111', '113', '117', '121', '123', '200', '202', '210',
     '212', '213', '214', '219', '221', '222', '228', '231', '232', '233', '234',
 )
-# Registros do DS1 usados como validacao (~20% dos batimentos do DS1). Foram
-# escolhidos para que a validacao tenha batimentos S, V e F sem tirar do
-# treino os registros que concentram essas classes (208 tem quase todos os F
-# do DS1, 209 boa parte dos S). A distribuicao de classes de cada conjunto e
-# impressa em build_full_dataset() para conferir.
+# DS1 records used for validation (~20% of DS1 beats). They were selected so
+# validation contains S, V, and F beats without removing from training the
+# records that concentrate these classes (208 has nearly all DS1 F beats, 209
+# many of the S beats). Each split's class distribution is printed by
+# build_full_dataset() for verification.
 VALIDATION_RECORDS = ('118', '124', '205', '223')
 PACED_TRAIN_RECORDS = ('217',)
 PACED_TEST_RECORDS = ('107',)
 TRAIN_RECORDS = tuple(r for r in DS1_RECORDS if r not in VALIDATION_RECORDS) + (
     PACED_TRAIN_RECORDS if INCLUDE_PACED_RECORDS else ())
 TEST_RECORDS = DS2_RECORDS + (PACED_TEST_RECORDS if INCLUDE_PACED_RECORDS else ())
-# O cache sempre guarda todos os registros (com os de marcapasso); os
-# conjuntos acima so escolhem quais usar, entao mudar INCLUDE_PACED_RECORDS
-# nao obriga a reconstruir o cache.
+# The cache always stores all records (including paced records); the splits
+# above only select which ones to use, so changing INCLUDE_PACED_RECORDS does
+# not require rebuilding the cache.
 ALL_RECORDS = DS1_RECORDS + PACED_TRAIN_RECORDS + DS2_RECORDS + PACED_TEST_RECORDS
 
-# Features de RR de cada batimento, a partir dos picos R anotados (os mesmos
-# que centralizam a janela do batimento). A forma de onda sozinha nao mostra
-# que um batimento veio adiantado, que e o que mais separa S (e ajuda V/F) de
-# N. O host envia esses valores junto com cada batimento
-# (benchmark_serial.py); o firmware nao calcula RR.
+# RR features for each beat, based on the annotated R peaks (the same peaks
+# that center the beat window). The waveform alone does not show that a beat
+# arrived early, which is what most separates S (and helps V/F) from N. The
+# host sends these values with each beat (benchmark_serial.py); the firmware
+# does not calculate RR.
 #
-# Todas sao razoes, nao intervalos em segundos: o RR absoluto depende da
-# frequencia cardiaca de cada paciente, e no split inter-paciente o modelo
-# acaba aprendendo o ritmo dos pacientes do treino em vez da prematuridade.
-# E o que vai para os modelos e o LOG de cada razao: 0 = ritmo normal,
-# simetrico entre adiantado e atrasado (0.5 e 2 viram -0.69 e +0.69), e sem
-# as caudas longas das razoes cruas (uma pausa de 6 s da post_pre_rr ~8).
-# As caudas longas estragam a quantizacao int8: a entrada do MLP e o RR da
-# CNN tem uma escala so para o tensor inteiro, e um valor extremo deixa
-# poucos niveis para os valores tipicos.
-# As medias usam so os intervalos ANTERIORES ao batimento (causal, como seria
-# em tempo real, e sem que um batimento prematuro puxe a propria referencia):
-#   local_rr: media dos ultimos RR_LOCAL_BEATS intervalos (ritmo recente)
-#   long_rr:  media dos ultimos RR_LONG_BEATS intervalos (~5 min, ritmo de
-#             base do paciente)
-# e as features sao:
-#   log_pre_rr_local:  log(pre_rr / local_rr)  (prematuridade)
-#   log_post_rr_local: log(post_rr / local_rr) (pausa depois do batimento)
-#   log_post_pre_rr:   log(post_rr / pre_rr)   (pausa compensatoria)
-#   log_pre_rr_long:   log(pre_rr / long_rr)   (prematuridade em relacao ao
-#                      ritmo de base, robusta quando os ultimos batimentos
-#                      tambem foram ectopicos, como em bigeminismo)
-# onde pre_rr = R atual - R anterior e post_rr = R seguinte - R atual.
+# All are ratios, not intervals in seconds: absolute RR depends on each
+# patient's heart rate, and an inter-patient split would otherwise make the
+# model learn the training patients' rhythm instead of prematurity. What goes
+# to the models is the LOG of each ratio: 0 = normal rhythm, symmetric between
+# early and late (0.5 and 2 become -0.69 and +0.69), without the long tails of
+# raw ratios (a 6 s pause gives post_pre_rr ~8). Long tails harm int8
+# quantization: the MLP input and the CNN RR input each have one scale for the
+# entire tensor, and an extreme value leaves few levels for typical values.
+# Averages use only intervals BEFORE the beat (causal, as in real time, and
+# without a premature beat pulling its own reference):
+#   local_rr: mean of the last RR_LOCAL_BEATS intervals (recent rhythm)
+#   long_rr:  mean of the last RR_LONG_BEATS intervals (~5 min, patient's
+#             baseline rhythm)
+# and the features are:
+#   log_pre_rr_local:  log(pre_rr / local_rr)  (prematurity)
+#   log_post_rr_local: log(post_rr / local_rr) (pause after the beat)
+#   log_post_pre_rr:   log(post_rr / pre_rr)   (compensatory pause)
+#   log_pre_rr_long:   log(pre_rr / long_rr)   (prematurity relative to
+#                      baseline rhythm, robust when the last beats
+#                      were also ectopic, as in bigeminy)
+# where pre_rr = current R - previous R and post_rr = next R - current R.
 RR_FEATURES = ('log_pre_rr_local', 'log_post_rr_local', 'log_post_pre_rr', 'log_pre_rr_long')
 RR_LOCAL_BEATS = 10
 RR_LONG_BEATS = 300
 
-# Classes em que os modelos sao comparados (macro-F1, escolha do checkpoint).
-# Q fica de fora: sem os registros com marcapasso quase nao ha Q, e com eles
-# Q vem de um unico paciente em cada conjunto (ver INCLUDE_PACED_RECORDS).
+# Classes used to compare models (macro-F1, checkpoint selection).
+# Q is excluded: without paced records there is almost no Q, and with them Q
+# comes from one patient in each split (see INCLUDE_PACED_RECORDS).
 SCORED_CLASSES = ('N', 'S', 'V', 'F')
 
-# Versao do formato do cache: aumentar sempre que o que e salvo nele mudar
-# (janelas, RR_FEATURES, registros), para que caches antigos sejam refeitos.
+# Cache format version: increment whenever its contents change (windows,
+# RR_FEATURES, records), so old caches are rebuilt.
 DATASET_CACHE_VERSION = 3
 
-# 1. Filtro Causal (Pronto para o Edge AI / ESP32)
+# 1. Causal filter (ready for Edge AI / ESP32)
 #
-# Aplicado independentemente em cada janela de batimento (256 amostras), para
-# reproduzir exatamente o que o firmware faz em model_<modelo>.cc
-# (filter_sos): a placa recebe o ECG cru e filtra cada janela isoladamente,
-# sem contexto do sinal continuo. Por isso o filtro NAO e aplicado no sinal
-# continuo do registro nem fica salvo no cache do dataset -- ele so entra na
-# hora de treinar/avaliar, para que treino e inferencia no device vejam
-# exatamente a mesma transformacao.
+# Applied independently to each beat window (256 samples) to exactly reproduce
+# what the firmware does in model_<model>.cc (filter_sos): the board receives
+# raw ECG and filters each window independently, without continuous-signal
+# context. Therefore the filter is not applied to the continuous record or
+# saved in the dataset cache; it is applied only during training/evaluation so
+# training and device inference see exactly the same transformation.
 #
-# Antes de filtrar, o nivel da primeira amostra e subtraido da janela. Sem
-# isso, o filtro parte do estado zero e o offset DC da janela (linha de base)
-# vira um transiente que atravessa a janela inteira. Como o ganho DC do
-# passa-banda e zero, subtrair x[0] e filtrar a partir do zero e exatamente
-# igual a filtrar o sinal original partindo do regime permanente para x[0]
-# (sosfilt_zi(sos) * x[0]) -- e custa so uma subtracao no firmware.
+# Before filtering, the first sample level is subtracted from the window.
+# Otherwise the filter starts at zero state and the window's DC offset (baseline)
+# becomes a transient spanning the entire window. Since the band-pass DC gain
+# is zero, subtracting x[0] and filtering from zero is exactly equivalent to
+# filtering the original signal from steady state at x[0] (sosfilt_zi(sos) *
+# x[0]), and costs only one subtraction in the firmware.
 def filter_beats(beats, lowcut=0.5, highcut=45.0, fs=sampling_rate, order=4):
     print(f'[FILTER] Applying band-pass filter to {len(beats)} beat window(s)...')
     nyq = 0.5 * fs
@@ -164,7 +159,7 @@ def ensure_record_local(record_name):
     print(f'[DOWNLOAD] Record {record_name} saved locally to {data_directory}.')
 
 
-# 3. Extração por paciente
+# 3. Per-patient extraction
 def load_and_segment_record(record_name, config):
     print(f'[RECORD] Loading record {record_name}...')
     ensure_record_local(record_name)
@@ -172,7 +167,7 @@ def load_and_segment_record(record_name, config):
     record = wfdb.rdrecord(local_record_path)
     annotation = wfdb.rdann(local_record_path, 'atr')
 
-    # Busca dinamicamente a feature configurada (ex: 'MLII')
+    # Dynamically find the configured feature (e.g. 'MLII')
     if config.feature in record.sig_name:
         channel_idx = record.sig_name.index(config.feature)
     else:
@@ -181,11 +176,11 @@ def load_and_segment_record(record_name, config):
         
     raw_signal = record.p_signal[:, channel_idx]
 
-    # Define o raio da janela com base no input_size (256 // 2 = 128)
+    # Define the window radius from input_size (256 // 2 = 128)
     window_radius = config.input_size // 2
 
-    # Picos R dos batimentos (anotacoes que nao sao batimento, como '+' e
-    # '~', ficam de fora) -- base tanto das janelas quanto dos intervalos RR.
+    # R peaks of beats (non-beat annotations, such as '+' and '~', are
+    # excluded); these are the basis for both windows and RR intervals.
     beat_positions = [
         (sample, symbol)
         for sample, symbol in zip(annotation.sample, annotation.symbol)
@@ -196,20 +191,20 @@ def load_and_segment_record(record_name, config):
 
     X, rr, y = [], [], []
 
-    # O primeiro e o ultimo batimento nao tem RR anterior/seguinte.
+    # The first and last beats have no previous/next RR interval.
     for i in range(1, len(beat_positions) - 1):
         peak_idx, symbol = beat_positions[i]
 
-        # Garante que não vai estourar o limite do array
+        # Ensure the window stays within the array bounds.
         if peak_idx >= window_radius and peak_idx + window_radius <= len(raw_signal):
-            # O tamanho recortado será exatamente config.input_size. Cru:
-            # sem filtro e sem normalização -- é exatamente o que o
-            # firmware recebe por serial e filtra ele mesmo antes de
-            # inferir (ver model_<modelo>.cc).
+            # The extracted size is exactly config.input_size. Raw, without
+            # filtering or normalization, this is exactly what the firmware
+            # receives over serial and filters before inference
+            # (see model_<model>.cc).
             beat_window = raw_signal[peak_idx - window_radius : peak_idx + window_radius]
 
-            # Ainda descarta janelas degeneradas (linha reta / sensor
-            # travado), que não são um batimento válido de qualquer jeito.
+            # Also discard degenerate windows (flat line / stalled sensor),
+            # which are not valid beats anyway.
             if beat_window.max() - beat_window.min() > 0:
                 X.append(beat_window)
                 rr.append(rr_features(pre_rr_all, i))
@@ -235,7 +230,7 @@ def rr_features(pre_rr_all, i):
     return tuple(np.log((pre_rr / local_rr, post_rr / local_rr, post_rr / pre_rr, pre_rr / long_rr)))
 
 
-# 3.1 Cache local do dataset já processado (janelas extraídas de todos os registros)
+# 3.1 Local cache of the processed dataset (windows from all records)
 def dataset_cache_path(feature, input_size):
     return cache_directory / f'dataset_{feature}_{input_size}.npz'
 
@@ -272,7 +267,7 @@ def load_cached_dataset(config):
     for record_index, record_name in enumerate(records_to_load, start=1):
         print(f'[DATA] Processing record {record_index}/{len(records_to_load)}: {record_name}')
 
-        # Loop infinito que só é quebrado quando o download/processamento dá certo
+        # Retry until download/processing succeeds.
         while True:
             try:
                 X_patient, rr_patient, y_patient = load_and_segment_record(record_name, config)
@@ -284,13 +279,13 @@ def load_cached_dataset(config):
                 else:
                     print(f'[DATA] Record {record_name} skipped because no valid beats were found.')
 
-                # Se chegou aqui sem dar erro, sai do while e vai para o próximo record
+                # If no error occurred, move to the next record.
                 break
 
             except Exception as e:
                 print(f'[ERROR] Failed to process record {record_name}: {e}')
                 print('[RETRY] Retrying in 5 seconds...')
-                time.sleep(5)  # Espera 5 segundos antes de tentar de novo para não sobrecarregar o PhysioNet
+                time.sleep(5)  # Wait 5 seconds before retrying to avoid overloading PhysioNet.
 
     X_total = np.concatenate(all_X, axis=0).astype(np.float32)
     rr_total = np.concatenate(all_rr, axis=0).astype(np.float32)
@@ -298,11 +293,10 @@ def load_cached_dataset(config):
     records = np.concatenate(all_records, axis=0)
     print(f'[DATA] Complete dataset shape: X={X_total.shape}, y={y_total.shape}')
 
-    # Cache guarda o sinal CRU (sem filtro, sem normalização). É esse
-    # mesmo cache que o benchmark_serial.py usa para montar o conjunto de
-    # teste enviado às placas -- assim o dispositivo recebe o mesmo tipo de
-    # sinal que receberia em um deployment real (ECG cru de um ADC), e é ele
-    # mesmo quem filtra antes de inferir.
+    # The cache stores the RAW signal (without filtering or normalization).
+    # benchmark_serial.py uses this same cache to build the test set sent to
+    # the boards, so the device receives the same signal type as in a real
+    # deployment (raw ECG from an ADC) and performs the filtering itself.
     cache_directory.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(cache_path, X=X_total, rr=rr_total, y=y_total, records=records,
                         version=DATASET_CACHE_VERSION)
@@ -321,7 +315,7 @@ def print_class_distribution(name, y):
     print(f'[SPLIT] {name}: {len(y)} beats ({summary})')
 
 
-# 4. Função principal de carregamento
+# 4. Main loading function
 def build_full_dataset(config):
     """With config.split, returns (train, validation, test), split by patient
     (see DS1_RECORDS / TEST_RECORDS above); otherwise returns every beat as a
@@ -335,17 +329,17 @@ def build_full_dataset(config):
     X_total, rr_total, y_total, records = load_cached_dataset(config)
 
     def make_set(name, mask):
-        # O filtro só é aplicado aqui, sobre os splits em memória -- nunca é
-        # salvo de volta no cache. Reproduz exatamente o que o firmware faz
-        # com cada janela recebida por serial (ver filter_beats acima).
+        # The filter is applied here only, to the in-memory splits; it is never
+        # saved back to the cache. This exactly reproduces what the firmware
+        # does with each window received over serial (see filter_beats above).
         print_class_distribution(name, y_total[mask])
         return SimpleNamespace(X=filter_beats(X_total[mask]), rr=rr_total[mask], y=y_total[mask],
                                records=records[mask])
 
-    # 3. Usa a config para decidir se faz o split ou não
+    # Use the config to decide whether to split the dataset.
     if config.split:
         paced = 'with' if INCLUDE_PACED_RECORDS else 'without'
-        print(f'[SPLIT] Splitting dataset by patient (inter-patient, de Chazal DS1/DS2, '
+        print(f'[SPLIT] Splitting dataset by patient (inter-patient, Chazal DS1/DS2, '
               f'{paced} paced records)...')
         train = make_set('Training (DS1)', select_records(records, TRAIN_RECORDS))
         validation = make_set('Validation (DS1)', select_records(records, VALIDATION_RECORDS))

@@ -70,9 +70,9 @@ def draw(axes, matrix, title, xlabel=True, ylabel=True):
     axes.set_yticks(range(len(CLASSES)), [f'{c} ({totals[i, 0]:,})'.replace(',', '.')
                                            for i, c in enumerate(CLASSES)])
     if xlabel:
-        axes.set_xlabel('Classe prevista', color=INK)
+        axes.set_xlabel('Predicted class', color=INK)
     if ylabel:
-        axes.set_ylabel('Classe real (batimentos)', color=INK)
+        axes.set_ylabel('True class (beats)', color=INK)
     axes.set_title(title, color=INK, fontsize=11)
     axes.tick_params(colors=MUTED, labelcolor=INK, length=0)
     for spine in axes.spines.values():
@@ -109,7 +109,7 @@ def plot_board(mcu, output, formats):
         matrices.append((model, matrix))
         figure, axes = plt.subplots(figsize=(4.8, 4.2))
         image = draw(axes, matrix, f'{MODEL_NAMES.get(model, model)} — {board}')
-        figure.colorbar(image, ax=axes, fraction=0.046, pad=0.04, label='% da classe real')
+        figure.colorbar(image, ax=axes, fraction=0.046, pad=0.04, label='% of true class')
         save(figure, output / f'confusion_{mcu}_{model}', formats)
         print(f'[{mcu}] {model}: {matrix.sum():,} beats')
 
@@ -123,7 +123,7 @@ def plot_board(mcu, output, formats):
                      xlabel=index + columns >= len(matrices), ylabel=column == 0)
     for index in range(len(matrices), rows * columns):
         axes_grid[index // columns][index % columns].axis('off')
-    figure.colorbar(image, ax=axes_grid, shrink=0.6, label='% da classe real')
+    figure.colorbar(image, ax=axes_grid, shrink=0.6, label='% of true class')
     save(figure, output / f'confusion_{mcu}', formats)
     print(f'[{mcu}] saved to {output}')
 

@@ -36,7 +36,7 @@ elseif(TINYML_MODEL STREQUAL "svm")
     set(model_define TINYML_MODEL_SVM)
     set(model_source "model_svm.cc")
 else()
-    message(FATAL_ERROR "TINYML_MODEL invalido: ${TINYML_MODEL} (use cnn_rn, cnn_mn2, cnn_mn3, mlp, rf ou svm)")
+    message(FATAL_ERROR "Invalid TINYML_MODEL: ${TINYML_MODEL} (use cnn_rn, cnn_mn2, cnn_mn3, mlp, rf, or svm)")
 endif()
 
 # energy_app.cc replaces the serial DS2 benchmark app (tinyml_app.cc) in the

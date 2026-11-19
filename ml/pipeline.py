@@ -5,7 +5,7 @@ import sys
 import time
 from pathlib import Path
 
-# Project diretories
+# Project directories
 project_directory = Path(__file__).resolve().parent
 src_directory = project_directory / 'src'
 classifiers_directory = src_directory / 'classifiers'

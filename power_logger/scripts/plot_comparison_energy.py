@@ -147,14 +147,14 @@ def plot_time_series(profile_rows, energy_row, title, burst, destination, format
     top.axhline(inferring, color=muted_ink, linewidth=1, linestyle=':')
     top.annotate(f'idle {idle:.1f} mA', (t_s[-1], idle), xytext=(0, 4),
                  textcoords='offset points', ha='right', va='bottom', color=ink, fontsize=8)
-    top.annotate(f'inferência {inferring:.1f} mA', (t_s[-1], inferring), xytext=(0, 4),
+    top.annotate(f'inference {inferring:.1f} mA', (t_s[-1], inferring), xytext=(0, 4),
                  textcoords='offset points', ha='right', va='bottom', color=ink, fontsize=8)
-    top.set_ylabel('Corrente (mA)', color=ink)
+    top.set_ylabel('Current (mA)', color=ink)
     top.set_title(title, color=ink, loc='left', fontsize=11)
 
     bottom.plot(t_s, voltage, color=series_color, linewidth=1.2)
-    bottom.set_ylabel('Tensão (V)', color=ink)
-    bottom.set_xlabel('Tempo (s)', color=ink)
+    bottom.set_ylabel('Voltage (V)', color=ink)
+    bottom.set_xlabel('Time (s)', color=ink)
     for axes in (top, bottom):
         style_axes(axes)
     save(figure, destination, formats)
@@ -171,10 +171,10 @@ def plot_voltage_vs_current(profile_rows, title, destination, formats):
         slope, intercept = np.polyfit(current, voltage, 1)  # V per mA
         line = np.array([current.min(), current.max()])
         axes.plot(line, slope * line + intercept, color=reference_color, linewidth=1.5)
-        axes.annotate(f'ajuste linear: V = {intercept:.3f} V − {-slope * 1000:.2f} Ω × I',
+        axes.annotate(f'linear fit: V = {intercept:.3f} V − {-slope * 1000:.2f} Ω × I',
                       (0.02, 0.04), xycoords='axes fraction', color=ink, fontsize=8)
-    axes.set_xlabel('Corrente (mA)', color=ink)
-    axes.set_ylabel('Tensão (V)', color=ink)
+    axes.set_xlabel('Current (mA)', color=ink)
+    axes.set_ylabel('Voltage (V)', color=ink)
     axes.set_title(title, color=ink, loc='left', fontsize=11)
     style_axes(axes)
     save(figure, destination, formats)
@@ -184,8 +184,8 @@ def plot_summary(summaries, title, destination, formats):
     labels = [model_label(model) for model, _ in summaries]
     positions = np.arange(len(summaries))
     panels = (
-        ('E_inf_uJ', 'Energia por inferência acima do idle (µJ)', True),
-        ('dP_inf_mW', 'Potência acima do idle (mW)', False),
+        ('E_inf_uJ', 'Energy per inference above idle (µJ)', True),
+        ('dP_inf_mW', 'Power above idle (mW)', False),
     )
     figure, axes_list = plt.subplots(1, 2, figsize=(11, 0.6 * len(summaries) + 1.8))
     for axes, (name, xlabel, log_scale) in zip(axes_list, panels):
@@ -241,7 +241,7 @@ def plot_comparison(per_board, destination, formats):
     axes.set_xscale('log')
     axes.set_yticks(positions, labels)
     axes.invert_yaxis()
-    axes.set_xlabel('Energia por inferência acima do idle (µJ)', color=ink)
+    axes.set_xlabel('Energy per inference above idle (µJ)', color=ink)
     axes.margins(x=0.12)
     style_axes(axes)
     axes.grid(False, axis='y')
@@ -284,11 +284,11 @@ def plot_mcu(mcu, arguments):
         plot_time_series(profile_rows, energy_row, f'{title} (burst {arguments.burst})',
                          arguments.burst, output_directory / f'{model}_current_voltage',
                          arguments.format)
-        plot_voltage_vs_current(profile_rows, f'{title}: tensão x corrente',
+        plot_voltage_vs_current(profile_rows, f'{title}: voltage x current',
                                 output_directory / f'{model}_voltage_x_current',
                                 arguments.format)
         print(f'[{mcu}] {model}: plots saved')
-    plot_summary(summaries, f'{board}: energia e potência por modelo (média ± desvio)',
+    plot_summary(summaries, f'{board}: energy and power per model (mean ± std)',
                  output_directory / 'summary_energy', arguments.format)
     print(f'[{mcu}] saved to {output_directory}')
     return {model_label(model): numeric['E_inf_uJ'] for model, numeric in summaries}

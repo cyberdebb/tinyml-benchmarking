@@ -64,18 +64,18 @@ output_directory = Path('models')
 
 def mobilenet_block(layer, filters, strides, config, expansion=2):
     """
-    Inverted Residual Block (baseado no MobileNetV2).
-    Utiliza Depthwise Separable Convolutions para reduzir drasticamente os parâmetros.
+    Inverted Residual Block (based on MobileNetV2).
+    Uses Depthwise Separable Convolutions to greatly reduce the parameter count.
     """
     in_filters = layer.shape[-1]
     
-    # 1. Expansion phase (Pointwise 1x1) - expande o número de canais internos
+    # 1. Expansion phase (Pointwise 1x1) - expand the number of internal channels.
     if expansion > 1:
         x = Conv1D(
             filters=in_filters * expansion,
             kernel_size=1,
             padding='same',
-            use_bias=False, # Não precisamos de bias antes do BatchNorm
+            use_bias=False, # No bias is needed before BatchNorm.
             kernel_initializer='he_normal'
         )(layer)
         x = BatchNormalization()(x)
@@ -83,7 +83,7 @@ def mobilenet_block(layer, filters, strides, config, expansion=2):
     else:
         x = layer
 
-    # 2. Depthwise Convolution - aplica filtros espacialmente por canal
+    # 2. Depthwise Convolution - apply spatial filters per channel.
     x = DepthwiseConv1D(
         kernel_size=config.kernel_size,
         strides=strides,
@@ -97,7 +97,7 @@ def mobilenet_block(layer, filters, strides, config, expansion=2):
     if config.drop_rate > 0:
         x = Dropout(config.drop_rate)(x)
 
-    # 3. Projection phase (Pointwise 1x1) - Linear Bottleneck (Sem ReLU no final)
+    # 3. Projection phase (Pointwise 1x1) - linear bottleneck (no final ReLU).
     x = Conv1D(
         filters=filters,
         kernel_size=1,
@@ -107,12 +107,12 @@ def mobilenet_block(layer, filters, strides, config, expansion=2):
     )(x)
     x = BatchNormalization()(x)
 
-    # Residual Connection (apenas se a resolução temporal e número de canais baterem)
+    # Residual connection (only when temporal resolution and channel count match).
     if strides == 1 and in_filters == filters:
         shortcut = layer
         return add([shortcut, x])
     else:
-        # Se os canais mudaram, fazemos um atalho 1x1 linear para igualar o shape
+        # If channels changed, use a linear 1x1 shortcut to match the shape.
         shortcut = Conv1D(
             filters=filters,
             kernel_size=1,
@@ -127,8 +127,8 @@ def mobilenet_block(layer, filters, strides, config, expansion=2):
 
 def first_conv_block(inputs, config):
     """
-    A primeira camada é uma Conv1D padrão para extrair características iniciais,
-    seguida do primeiro bloco MobileNet (geralmente sem expansão para economizar recursos).
+    The first layer is a standard Conv1D that extracts initial features,
+    followed by the first MobileNet block (usually without expansion to save resources).
     """
     layer = Conv1D(
         filters=config.base_filters, 
@@ -158,7 +158,8 @@ def main_loop_blocks(layer, config):
         else:
             strides = 1
         
-        # Aplicamos o bloco MobileNet com fator de expansão (padrão 2x ou 4x em V2, usamos 2 para ficar ultracompacto)
+        # Apply the MobileNet block with an expansion factor (normally 2x or
+        # 4x in V2; 2 is used here to keep the model very compact).
         layer = mobilenet_block(layer, filters, strides, config, expansion=2)
         
     return layer
