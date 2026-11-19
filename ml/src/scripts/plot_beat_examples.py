@@ -35,16 +35,16 @@ from load_data import aami_mapping, classes, ensure_record_local, filter_beats, 
 WINDOW = 256
 MAX_BEATS_PER_SYMBOL = 2000   # enough to find a typical beat
 SYMBOL_NAMES = {
-    'N': 'Normal', 'L': 'Bloqueio de ramo esquerdo', 'R': 'Bloqueio de ramo direito',
-    'e': 'Escape atrial', 'j': 'Escape juncional',
-    'A': 'Prematuro atrial', 'a': 'Prematuro atrial aberrante',
-    'J': 'Prematuro juncional', 'S': 'Prematuro supraventricular',
-    'V': 'Ventricular prematuro', 'E': 'Escape ventricular',
-    'F': 'Fusão ventricular e normal',
-    '/': 'Marcapasso', 'f': 'Fusão marcapasso e normal', 'Q': 'Não classificável',
+    'N': 'Normal', 'L': 'Left bundle branch block', 'R': 'Right bundle branch block',
+    'e': 'Atrial escape', 'j': 'Junctional escape',
+    'A': 'Atrial premature', 'a': 'Aberrant atrial premature',
+    'J': 'Junctional premature', 'S': 'Supraventricular premature',
+    'V': 'Premature ventricular', 'E': 'Ventricular escape',
+    'F': 'Ventricular and normal fusion',
+    '/': 'Paced', 'f': 'Paced and normal fusion', 'Q': 'Unclassifiable',
 }
 CLASS_NAMES = {'N': 'N (normal)', 'S': 'S (supraventricular)', 'V': 'V (ventricular)',
-               'F': 'F (fusão)', 'Q': 'Q (desconhecido)'}
+               'F': 'F (fusion)', 'Q': 'Q (unknown)'}
 CLASS_COLORS = {'N': '#2a78d6', 'S': '#eb6834', 'V': '#1baf7a', 'F': '#c98500', 'Q': '#e87ba4'}
 INK, MUTED, GRID = '#0b0b0b', '#5f5e5a', '#e4e3df'
 
@@ -96,7 +96,7 @@ def plot(beats, counts, destination):
             symbol = symbols[column]
             axes_.plot(t_ms, typical_beat(beats[symbol]), color=CLASS_COLORS[name], lw=1.6)
             axes_.axvline(0, color=GRID, lw=1, zorder=0)
-            axes_.set_title(f"{SYMBOL_NAMES[symbol]} ('{symbol}')\n{counts[symbol]:,} batimentos"
+            axes_.set_title(f"{SYMBOL_NAMES[symbol]} ('{symbol}')\n{counts[symbol]:,} beats"
                             .replace(',', '.'), fontsize=9, color=INK)
             axes_.tick_params(labelsize=8, colors=MUTED, labelcolor=INK)
             for side in ('top', 'right'):
@@ -106,7 +106,7 @@ def plot(beats, counts, destination):
             if column == 0:
                 axes_.set_ylabel(f'{CLASS_NAMES[name]}\n\nmV', fontsize=9.5, color=INK)
             if row == len(classes) - 1 or column >= len(by_class[classes[row + 1]]):
-                axes_.set_xlabel('tempo em relação ao pico R (ms)', fontsize=8.5, color=INK)
+                axes_.set_xlabel('time relative to R peak (ms)', fontsize=8.5, color=INK)
                 axes_.tick_params(labelbottom=True)
     figure.tight_layout()
     destination.parent.mkdir(parents=True, exist_ok=True)

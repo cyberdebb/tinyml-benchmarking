@@ -189,16 +189,16 @@ def read_results(output_file):
 def macro_scores(y_true, y_predicted, cm, labels, beta):
     """Macro averages over the given class ids: sensitivity (recall),
     specificity, F1 and F-beta (beta=2 weighs sensitivity more)."""
-    # A especificidade em multiclasse precisa ser calculada manualmente,
-    # com os Verdadeiros Negativos (TN) e Falsos Positivos (FP) de cada
-    # classe tirados da Matriz de Confusão.
+    # Multiclass specificity must be calculated manually from the True
+    # Negatives (TN) and False Positives (FP) of each class in the confusion
+    # matrix.
     specificities = []
     for i in labels:
         tp = cm[i, i]
         fn = np.sum(cm[i, :]) - tp
         fp = np.sum(cm[:, i]) - tp
         tn = np.sum(cm) - (tp + fp + fn)
-        # Evita divisão por zero
+        # Avoid division by zero.
         specificities.append(tn / (tn + fp) if (tn + fp) > 0 else 0.0)
 
     return {
@@ -226,14 +226,14 @@ def summary_text(model, y_true, y_predicted, records, inference_us, filter_us, m
     inference_us = np.array(inference_us, dtype=float)
     filter_us = np.array(filter_us, dtype=float)
 
-    # 1. Acurácia
+    # 1. Accuracy
     accuracy = accuracy_score(y_true, y_predicted)
 
-    # Médias macro sobre as mesmas classes do treino (SCORED_CLASSES: N, S,
-    # V, F) e, separado, sobre N, S e V (NSV_CLASSES: o F do DS2 e quase
-    # todo de um registro so, ver metrics.py). Q fica de fora: quase nao ha
-    # Q no DS2 sem os registros com marcapasso, e uma unica previsao Q errada
-    # colocaria na media uma classe com metricas 0.
+    # Macro averages over the same training classes (SCORED_CLASSES: N, S, V,
+    # F) and separately over N, S, and V (NSV_CLASSES: nearly all DS2 F beats
+    # come from one record; see metrics.py). Q is excluded: there is almost no
+    # Q in DS2 without paced records, and one wrong Q prediction would add a
+    # class with zero metrics to the average.
     beta_val = 2.0
     # Fixed labels so the matrix is always 5x5, even when a rare class is
     # missing from the beats sent.
@@ -243,8 +243,8 @@ def summary_text(model, y_true, y_predicted, records, inference_us, filter_us, m
     class_f1 = f1_score(y_true, y_predicted, labels=SCORED_CLASS_IDS, average=None,
                         zero_division=0)
 
-    # 6. Vazão Computacional (Throughput)
-    # Convertendo o tempo médio de inferência para segundos e dividindo 1 por ele
+    # 6. Computational throughput
+    # Convert the mean inference time to seconds and divide 1 by it.
     mean_inference_sec = np.mean(inference_us) / 1_000_000.0
     throughput = 1.0 / mean_inference_sec if mean_inference_sec > 0 else 0.0
 
